@@ -35,9 +35,13 @@
 #include <glib/gstdio.h>
 #include <glib/gi18n.h>
 #include <gdk/gdkkeysyms.h>
+#ifdef ENABLE_X11
 #include <gdk/gdkx.h>
+#endif
 #include <gtk/gtk.h>
+#ifdef ENABLE_X11
 #include <gtk/gtkx.h>
+#endif
 #include <gio/gio.h>
 
 #define MATE_DESKTOP_USE_UNSTABLE_API
@@ -154,7 +158,11 @@ enum
 
 static guint lock_plug_signals [LAST_SIGNAL] = { 0 };
 
+#ifdef ENABLE_X11
 G_DEFINE_TYPE_WITH_PRIVATE (GSLockPlug, gs_lock_plug, GTK_TYPE_PLUG)
+#else
+G_DEFINE_TYPE_WITH_PRIVATE (GSLockPlug, gs_lock_plug, GTK_TYPE_WINDOW)
+#endif
 
 static void
 gs_lock_plug_style_set (GtkWidget *widget,
@@ -2117,7 +2125,7 @@ gs_lock_plug_init (GSLockPlug *plug)
 	}
 
 	/* Layout indicator */
-#ifdef WITH_KBD_LAYOUT_INDICATOR
+#if defined(WITH_KBD_LAYOUT_INDICATOR) && defined(ENABLE_X11)
 	if (plug->priv->auth_prompt_kbd_layout_indicator != NULL)
 	{
 		XklEngine *engine;

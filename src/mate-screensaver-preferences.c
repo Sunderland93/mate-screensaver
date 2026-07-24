@@ -32,7 +32,9 @@
 #include <sys/types.h>          /* For uid_t, gid_t */
 
 #include <glib/gi18n.h>
+#ifdef ENABLE_X11
 #include <gdk/gdkx.h>
+#endif
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -1313,7 +1315,11 @@ constrain_list_size (GtkWidget      *widget,
 	int            max_height;
 
 	/* constrain height to be the tree height up to a max */
+#ifdef ENABLE_X11
 	max_height = (HeightOfScreen (gdk_x11_screen_get_xscreen (gtk_widget_get_screen (widget)))) / 4;
+#else
+	max_height = gdk_monitor_get_height (gdk_display_get_monitor_at_window (gdk_display_get_default (), gtk_widget_get_window (widget))) / 4;
+#endif
 
 	gtk_widget_get_preferred_size (to_size, &req, NULL);
 	allocation->height = MIN (req.height, max_height);
@@ -1481,6 +1487,7 @@ get_best_visual_for_display (GdkDisplay *display)
 	{
 		if (v != 0)
 		{
+#ifdef ENABLE_X11
 			VisualID      visual_id;
 
 			visual_id = (VisualID) v;
@@ -1489,6 +1496,7 @@ get_best_visual_for_display (GdkDisplay *display)
 			gs_debug ("Found best GL visual for display %s: 0x%x",
 			          gdk_display_get_name (display),
 			          (unsigned int) visual_id);
+#endif
 		}
 	}
 out:

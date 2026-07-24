@@ -37,6 +37,18 @@ GETTEXT_PACKAGE=mate-screensaver
 AC_SUBST(GETTEXT_PACKAGE)
 AC_DEFINE_UNQUOTED(GETTEXT_PACKAGE, "$GETTEXT_PACKAGE", [Name of default gettext domain])
 
+dnl ---------------------------------------------------------------------------
+dnl - Platform selection
+dnl ---------------------------------------------------------------------------
+
+AC_ARG_ENABLE(x11,
+  AS_HELP_STRING([--enable-x11], [Build with X11 support]),
+  [enable_x11=$enableval], [enable_x11=yes])
+
+AC_ARG_ENABLE(wayland,
+  AS_HELP_STRING([--enable-wayland], [Build with Wayland support]),
+  [enable_wayland=$enableval], [enable_wayland=no])
+
 dnl
 dnl Enable gsettings schema macros
 dnl
@@ -61,16 +73,33 @@ AC_CHECK_FUNCS(getresuid)
 AC_TYPE_UID_T
 
 AC_CHECK_FUNCS([setresuid setenv unsetenv clearenv])
-PKG_CHECK_MODULES(MATE_SCREENSAVER,
-        x11 >= $X11_REQUIRED_VERSION
-        xscrnsaver
-        gtk+-3.0 >= $GTK_REQUIRED_VERSION
-        dbus-glib-1 >= $DBUS_REQUIRED_VERSION
-        gio-2.0 >= $GLIB_REQUIRED_VERSION
-        mate-desktop-2.0 >= $MATE_DESKTOP_REQUIRED_VERSION
-        libmate-menu >= $LIBMATE_MENU_REQUIRED_VERSION)
-AC_SUBST(MATE_SCREENSAVER_CFLAGS)
-AC_SUBST(MATE_SCREENSAVER_LIBS)
+
+dnl ---------------------------------------------------------------------------
+dnl - X11 dependencies
+dnl ---------------------------------------------------------------------------
+
+if test "x$enable_x11" = "xyes"; then
+  PKG_CHECK_MODULES(MATE_SCREENSAVER,
+          x11 >= $X11_REQUIRED_VERSION
+          xscrnsaver
+          gtk+-3.0 >= $GTK_REQUIRED_VERSION
+          dbus-glib-1 >= $DBUS_REQUIRED_VERSION
+          gio-2.0 >= $GLIB_REQUIRED_VERSION
+          mate-desktop-2.0 >= $MATE_DESKTOP_REQUIRED_VERSION
+          libmate-menu >= $LIBMATE_MENU_REQUIRED_VERSION)
+  AC_SUBST(MATE_SCREENSAVER_CFLAGS)
+  AC_SUBST(MATE_SCREENSAVER_LIBS)
+  AC_DEFINE(ENABLE_X11, 1, [Build with X11 support])
+else
+  PKG_CHECK_MODULES(MATE_SCREENSAVER,
+          gtk+-3.0 >= $GTK_REQUIRED_VERSION
+          dbus-glib-1 >= $DBUS_REQUIRED_VERSION
+          gio-2.0 >= $GLIB_REQUIRED_VERSION
+          mate-desktop-2.0 >= $MATE_DESKTOP_REQUIRED_VERSION
+          libmate-menu >= $LIBMATE_MENU_REQUIRED_VERSION)
+  AC_SUBST(MATE_SCREENSAVER_CFLAGS)
+  AC_SUBST(MATE_SCREENSAVER_LIBS)
+fi
 
 PKG_CHECK_MODULES(MATE_SCREENSAVER_DIALOG,
         gio-2.0 >= $GLIB_REQUIRED_VERSION
@@ -97,7 +126,11 @@ AC_SUBST(MATE_SCREENSAVER_COMMAND_LIBS)
 AC_PATH_XTRA
 
 ALL_X_LIBS="$X_LIBS $X_PRE_LIBS -lXext -lX11 $X_EXTRA_LIBS"
-SAVER_LIBS="$ALL_X_LIBS"
+SAVER_LIBS=""
+
+if test "x$enable_x11" = "xyes"; then
+  SAVER_LIBS="$ALL_X_LIBS"
+fi
 
 AC_PATH_PROG(GLIB_GENMARSHAL, glib-genmarshal)
 
@@ -123,6 +156,56 @@ case "$host" in
 		AC_CHECK_LIB(resolv, daemon, [MATE_SCREENSAVER_LIBS="$MATE_SCREENSAVER_LIBS -lresolv"])
 	;;
 esac
+
+dnl ---------------------------------------------------------------------------
+dnl - Wayland dependencies
+dnl ---------------------------------------------------------------------------
+
+WAYLAND_CLIENT_CFLAGS=""
+WAYLAND_CLIENT_LIBS=""
+WAYLAND_PROTOCOLS_DATADIR=""
+WAYLAND_SCANNER=""
+LIBWLEMBED_CFLAGS=""
+LIBWLEMBED_LIBS=""
+GDK_WAYLAND_CFLAGS=""
+GDK_WAYLAND_LIBS=""
+GTK_LAYER_SHELL_CFLAGS=""
+GTK_LAYER_SHELL_LIBS=""
+
+if test "x$enable_wayland" = "xyes"; then
+  PKG_CHECK_MODULES(WAYLAND_CLIENT, [wayland-client >= 1.21.0], [have_wayland_client=yes], [have_wayland_client=no])
+  PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.31], [have_wayland_protocols=yes], [have_wayland_protocols=no])
+  PKG_CHECK_MODULES(GDK_WAYLAND, [gdk-wayland-3.0 >= $GTK_REQUIRED_VERSION], [have_gdk_wayland=yes], [have_gdk_wayland=no])
+  PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
+  PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
+  PKG_CHECK_MODULES(GTK_LAYER_SHELL, [gtk-layer-shell-0], [have_gtk_layer_shell=yes], [have_gtk_layer_shell=no])
+
+  AC_PATH_PROG([WAYLAND_SCANNER], [wayland-scanner], [no])
+  if test "x$WAYLAND_SCANNER" = "xno"; then
+    AC_MSG_ERROR([wayland-scanner not found])
+  fi
+
+  if test "x$have_wayland_protocols" = "xyes"; then
+    WAYLAND_PROTOCOLS_DATADIR=`pkg-config --variable=pkgdatadir wayland-protocols`
+  fi
+
+  if test "x$have_wayland_client" = "xyes" && test "x$have_wayland_protocols" = "xyes" && test "x$have_gdk_wayland" = "xyes" && test "x$have_libwlembed" = "xyes" && test "x$have_libwlembed_gtk3" = "xyes" && test "x$have_gtk_layer_shell" = "xyes"; then
+    AC_DEFINE(ENABLE_WAYLAND, 1, [Build with Wayland support])
+  else
+    AC_MSG_ERROR([Wayland support requested but required dependencies not found])
+  fi
+fi
+
+AC_SUBST(WAYLAND_CLIENT_CFLAGS)
+AC_SUBST(WAYLAND_CLIENT_LIBS)
+AC_SUBST(WAYLAND_PROTOCOLS_DATADIR)
+AC_SUBST(WAYLAND_SCANNER)
+AC_SUBST(LIBWLEMBED_CFLAGS)
+AC_SUBST(LIBWLEMBED_LIBS)
+AC_SUBST(GDK_WAYLAND_CFLAGS)
+AC_SUBST(GDK_WAYLAND_LIBS)
+AC_SUBST(GTK_LAYER_SHELL_CFLAGS)
+AC_SUBST(GTK_LAYER_SHELL_LIBS)
 
 # Optional dependencies for the theme engines
 
@@ -1020,6 +1103,9 @@ AC_SUBST(AUTH_LIBS)
 AC_SUBST(SAVER_LIBS)
 AC_SUBST(GL_LIBS)
 
+AM_CONDITIONAL(ENABLE_X11, test "x$enable_x11" = "xyes")
+AM_CONDITIONAL(ENABLE_WAYLAND, test "x$enable_wayland" = "xyes")
+
 
 REAL_PREFIX=
 if test "x$prefix" = "xNONE"; then
@@ -1157,6 +1243,9 @@ Configure summary:
     Docs enabled .................: ${enable_docbook_docs}
 
     GL ...........................: ${have_libgl}
+
+    X11 support ..................: ${enable_x11}
+    Wayland support ..............: ${enable_wayland}
 
     Screen locking enabled .......: ${enable_locking}
     Show keyboard indicator ......: ${with_kbd_layout_indicator}

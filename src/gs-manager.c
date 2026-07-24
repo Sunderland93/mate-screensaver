@@ -25,7 +25,9 @@
 
 #include <time.h>
 #include <gdk/gdk.h>
+#ifdef ENABLE_X11
 #include <gdk/gdkx.h>
+#endif
 
 #include <gio/gio.h>
 
@@ -1608,7 +1610,9 @@ on_display_monitor_removed (GdkDisplay *display,
 	gs_debug ("Monitor removed on display %s, now there are %d",
 	          gdk_display_get_name (display), n_monitors);
 
+#ifdef ENABLE_X11
 	gdk_x11_grab_server ();
+#endif
 
 	/* remove the now extra window */
 	l = manager->priv->windows;
@@ -1632,7 +1636,9 @@ on_display_monitor_removed (GdkDisplay *display,
 	}
 
 	gdk_display_flush (display);
+#ifdef ENABLE_X11
 	gdk_x11_ungrab_server ();
+#endif
 }
 
 static void

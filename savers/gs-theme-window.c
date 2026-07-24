@@ -33,7 +33,9 @@
 #include <glib-object.h>
 #include <glib/gi18n.h>
 
+#ifdef ENABLE_X11
 #include <gdk/gdkx.h>
+#endif
 #include <gtk/gtk.h>
 
 #include "gs-theme-window.h"
@@ -100,6 +102,7 @@ gs_theme_window_real_realize (GtkWidget *widget)
 	window = NULL;
 	preview_xid = g_getenv ("XSCREENSAVER_WINDOW");
 
+#ifdef ENABLE_X11
 	if (preview_xid != NULL)
 	{
 		char *end;
@@ -131,6 +134,7 @@ gs_theme_window_real_realize (GtkWidget *widget)
 			}
 		}
 	}
+#endif
 
 	if (window == NULL)
 	{

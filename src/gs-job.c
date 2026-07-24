@@ -39,7 +39,9 @@
 #include <glib/gstdio.h>
 #include <gio/gio.h>
 #include <gdk/gdk.h>
+#ifdef ENABLE_X11
 #include <gdk/gdkx.h>
+#endif
 
 #include "gs-debug.h"
 #include "gs-job.h"
@@ -77,8 +79,20 @@ widget_get_id_string (GtkWidget *widget)
 
 	g_return_val_if_fail (widget != NULL, NULL);
 
-	id = g_strdup_printf ("0x%X",
-	                      (guint32)GDK_WINDOW_XID (gtk_widget_get_window (widget)));
+#ifdef ENABLE_X11
+	if (GDK_IS_X11_DISPLAY (gdk_display_get_default ()))
+	{
+		id = g_strdup_printf ("0x%X",
+		                      (guint32)GDK_WINDOW_XID (gtk_widget_get_window (widget)));
+	}
+	else
+	{
+		id = g_strdup_printf ("0x%X", 0);
+	}
+#else
+	id = g_strdup_printf ("0x%X", 0);
+#endif
+
 	return id;
 }
 

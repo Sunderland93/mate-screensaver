@@ -1,7 +1,7 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*-
  *
  * Copyright (C) 2004-2005 William Jon McCann <mccann@jhu.edu>
- * Copyright (C) 2012-2021 MATE Developers
+ * Copyright (C) 2012-2026 MATE Developers
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 #ifndef __GS_WATCHER_H
 #define __GS_WATCHER_H
 
-#include <glib.h>
+#include <glib-object.h>
 
 G_BEGIN_DECLS
 
@@ -51,6 +51,10 @@ typedef struct
 	        gboolean   is_idle);
 	gboolean          (* idle_notice_changed) (GSWatcher *watcher,
 	        gboolean   in_effect);
+
+	void              (* activate_monitoring)  (GSWatcher *watcher,
+	        guint      timeout_ms);
+	void              (* deactivate_monitoring)(GSWatcher *watcher);
 } GSWatcherClass;
 
 GType       gs_watcher_get_type         (void);

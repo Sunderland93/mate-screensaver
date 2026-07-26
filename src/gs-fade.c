@@ -52,13 +52,13 @@
 
 /* XFree86 4.x+ Gamma fading */
 
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 
 #include <X11/extensions/xf86vmode.h>
 
 #define XF86_MIN_GAMMA  0.1
 
-#endif /* HAVE_XF86VMODE_GAMMA */
+#endif /* ENABLE_X11 && HAVE_XF86VMODE_GAMMA */
 
 static void     gs_fade_finalize   (GObject        *object);
 
@@ -81,7 +81,7 @@ struct GSFadeScreenPrivate
 	struct GSGammaInfo *info;
 	/* one per screen in theory */
 	MateRRScreen      *rrscreen;
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 	/* one per screen also */
 	XF86VidModeGamma    vmg;
 #endif /* HAVE_XF86VMODE_GAMMA */
@@ -129,7 +129,7 @@ G_DEFINE_TYPE_WITH_PRIVATE (GSFade, gs_fade, G_TYPE_OBJECT)
 
 static gpointer fade_object = NULL;
 
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 
 /* This is needed because the VidMode extension doesn't work
    on remote displays -- but if the remote display has the extension
@@ -284,7 +284,7 @@ gs_fade_set_enabled (GSFade  *fade,
 	}
 }
 
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 static gboolean
 gamma_fade_setup (GSFade *fade)
 {
@@ -406,7 +406,7 @@ screen_fade_finish (GSFade *fade)
 #endif /* ENABLE_X11 */
 }
 
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 static gboolean
 gamma_fade_set_alpha_gamma (GSFade *fade,
                             gdouble alpha)
@@ -426,7 +426,7 @@ check_gamma_extension (GSFade *fade)
 {
 #ifdef ENABLE_X11
 	struct GSFadeScreenPrivate *screen_priv;
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 	int      event;
 	int      error;
 	int      major;
@@ -436,7 +436,7 @@ check_gamma_extension (GSFade *fade)
 
 	screen_priv = &fade->priv->screen_priv;
 
-#ifdef HAVE_XF86VMODE_GAMMA
+#if defined(ENABLE_X11) && defined(HAVE_XF86VMODE_GAMMA)
 	res = XF86VidModeQueryExtension (GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()), &event, &error);
 	if (! res)
 		goto fade_none;

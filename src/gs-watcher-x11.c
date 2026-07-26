@@ -2,21 +2,22 @@
  *
  * Copyright (C) 2004-2006 William Jon McCann <mccann@jhu.edu>
  * Copyright (C) 2008      Red Hat, Inc.
- * Copyright (C) 2012-2021 MATE Developers
+ * Copyright (C) 2012-2026 MATE Developers
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  * Authors: William Jon McCann <mccann@jhu.edu>
  *
@@ -35,308 +36,78 @@
 #include <dbus/dbus-glib.h>
 
 #include "gs-watcher.h"
+#include "gs-watcher-private.h"
 #include "gs-marshal.h"
 #include "gs-debug.h"
 
-static void     gs_watcher_finalize   (GObject        *object);
+typedef struct GSWatcherX11Private GSWatcherX11Private;
 
-static gboolean watchdog_timer        (GSWatcher      *watcher);
-
-struct GSWatcherPrivate
+struct GSWatcherX11Private
 {
-	/* settings */
-	guint           enabled : 1;
-	guint           delta_notice_timeout;
-
-	/* state */
-	guint           active : 1;
-	guint           idle : 1;
-	guint           idle_notice : 1;
-
-	guint           idle_id;
-	char           *status_message;
-
 	DBusGProxy     *presence_proxy;
 	guint           watchdog_timer_id;
+	guint           idle_id;
+	guint           delta_notice_timeout;
 };
 
-enum
+typedef struct
 {
-    PROP_0,
-    PROP_STATUS_MESSAGE
-};
+	GSWatcher parent;
+} GSWatcherX11;
 
-enum
+typedef struct
 {
-    IDLE_CHANGED,
-    IDLE_NOTICE_CHANGED,
-    LAST_SIGNAL
-};
+	GSWatcherClass parent_class;
+} GSWatcherX11Class;
 
-static guint signals [LAST_SIGNAL] = { 0, };
+G_DEFINE_TYPE_WITH_PRIVATE (GSWatcherX11, gs_watcher_x11, GS_TYPE_WATCHER)
 
-G_DEFINE_TYPE_WITH_PRIVATE (GSWatcher, gs_watcher, G_TYPE_OBJECT)
+#define GS_WATCHER_X11(o)      (G_TYPE_CHECK_INSTANCE_CAST ((o), GS_TYPE_WATCHER_X11, GSWatcherX11))
+#define GS_IS_WATCHER_X11(o)   (G_TYPE_CHECK_INSTANCE_TYPE ((o), GS_TYPE_WATCHER_X11))
+#define GS_TYPE_WATCHER_X11    (gs_watcher_x11_get_type ())
+
+#define WATCHER_X11_GET_PRIVATE(o) ((GSWatcherX11Private *)gs_watcher_x11_get_instance_private (GS_WATCHER_X11 (o)))
+
+static void remove_watchdog_timer (GSWatcherX11 *x11);
+static gboolean watchdog_timer (GSWatcherX11 *x11);
 
 static void
-remove_watchdog_timer (GSWatcher *watcher)
+remove_idle_id (GSWatcherX11 *x11)
 {
-	if (watcher->priv->watchdog_timer_id != 0)
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
+	if (priv->idle_id > 0)
 	{
-		g_source_remove (watcher->priv->watchdog_timer_id);
-		watcher->priv->watchdog_timer_id = 0;
-	}
-}
-
-static void
-add_watchdog_timer (GSWatcher *watcher,
-                    guint      timeout)
-{
-	watcher->priv->watchdog_timer_id = g_timeout_add (timeout,
-	                                                  (GSourceFunc)watchdog_timer,
-	                                                  watcher);
-}
-
-static void
-gs_watcher_get_property (GObject    *object,
-                         guint       prop_id,
-                         GValue     *value,
-                         GParamSpec *pspec)
-{
-	GSWatcher *self;
-
-	self = GS_WATCHER (object);
-
-	switch (prop_id)
-	{
-	case PROP_STATUS_MESSAGE:
-		g_value_set_string (value, self->priv->status_message);
-		break;
-	default:
-		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-		break;
+		g_source_remove (priv->idle_id);
+		priv->idle_id = 0;
 	}
 }
 
 static void
-set_status_text (GSWatcher  *watcher,
-                 const char *text)
+add_watchdog_timer (GSWatcherX11 *x11,
+                    guint         timeout)
 {
-	g_free (watcher->priv->status_message);
-
-	watcher->priv->status_message = g_strdup (text);
-	g_object_notify (G_OBJECT (watcher), "status-message");
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
+	priv->watchdog_timer_id = g_timeout_add (timeout,
+	                                        (GSourceFunc)watchdog_timer,
+	                                        x11);
 }
 
 static void
-gs_watcher_set_property (GObject          *object,
-                         guint             prop_id,
-                         const GValue     *value,
-                         GParamSpec       *pspec)
+remove_watchdog_timer (GSWatcherX11 *x11)
 {
-	GSWatcher *self;
-
-	self = GS_WATCHER (object);
-
-	switch (prop_id)
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
+	if (priv->watchdog_timer_id != 0)
 	{
-	case PROP_STATUS_MESSAGE:
-		set_status_text (self, g_value_get_string (value));
-		break;
-	default:
-		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-		break;
+		g_source_remove (priv->watchdog_timer_id);
+		priv->watchdog_timer_id = 0;
 	}
 }
 
 static void
-gs_watcher_class_init (GSWatcherClass *klass)
+on_idle_timeout (GSWatcherX11 *x11)
 {
-	GObjectClass   *object_class = G_OBJECT_CLASS (klass);
-
-	object_class->finalize = gs_watcher_finalize;
-	object_class->get_property = gs_watcher_get_property;
-	object_class->set_property = gs_watcher_set_property;
-
-	g_object_class_install_property (object_class,
-	                                 PROP_STATUS_MESSAGE,
-	                                 g_param_spec_string ("status-message",
-	                                         NULL,
-	                                         NULL,
-	                                         NULL,
-	                                         G_PARAM_READWRITE));
-
-	signals [IDLE_CHANGED] =
-	    g_signal_new ("idle-changed",
-	                  G_TYPE_FROM_CLASS (object_class),
-	                  G_SIGNAL_RUN_LAST,
-	                  G_STRUCT_OFFSET (GSWatcherClass, idle_changed),
-	                  NULL,
-	                  NULL,
-	                  gs_marshal_BOOLEAN__BOOLEAN,
-	                  G_TYPE_BOOLEAN,
-	                  1, G_TYPE_BOOLEAN);
-	signals [IDLE_NOTICE_CHANGED] =
-	    g_signal_new ("idle-notice-changed",
-	                  G_TYPE_FROM_CLASS (object_class),
-	                  G_SIGNAL_RUN_LAST,
-	                  G_STRUCT_OFFSET (GSWatcherClass, idle_notice_changed),
-	                  NULL,
-	                  NULL,
-	                  gs_marshal_BOOLEAN__BOOLEAN,
-	                  G_TYPE_BOOLEAN,
-	                  1, G_TYPE_BOOLEAN);
-}
-
-static gboolean
-_gs_watcher_set_session_idle_notice (GSWatcher *watcher,
-                                     gboolean   in_effect)
-{
-	gboolean res;
-
-	res = FALSE;
-
-	if (in_effect != watcher->priv->idle_notice)
-	{
-
-		g_signal_emit (watcher, signals [IDLE_NOTICE_CHANGED], 0, in_effect, &res);
-		if (res)
-		{
-			gs_debug ("Changing idle notice state: %d", in_effect);
-
-			watcher->priv->idle_notice = (in_effect != FALSE);
-		}
-		else
-		{
-			gs_debug ("Idle notice signal not handled: %d", in_effect);
-		}
-	}
-
-	return res;
-}
-
-static gboolean
-_gs_watcher_set_session_idle (GSWatcher *watcher,
-                              gboolean   is_idle)
-{
-	gboolean res;
-
-	res = FALSE;
-
-	if (is_idle != watcher->priv->idle)
-	{
-
-		g_signal_emit (watcher, signals [IDLE_CHANGED], 0, is_idle, &res);
-		if (res)
-		{
-			gs_debug ("Changing idle state: %d", is_idle);
-
-			watcher->priv->idle = (is_idle != FALSE);
-		}
-		else
-		{
-			gs_debug ("Idle changed signal not handled: %d", is_idle);
-		}
-	}
-
-	return res;
-}
-
-gboolean
-gs_watcher_get_active (GSWatcher *watcher)
-{
-	gboolean active;
-
-	g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
-
-	active = watcher->priv->active;
-
-	return active;
-}
-
-static void
-_gs_watcher_reset_state (GSWatcher *watcher)
-{
-	watcher->priv->idle = FALSE;
-	watcher->priv->idle_notice = FALSE;
-}
-
-static gboolean
-_gs_watcher_set_active_internal (GSWatcher *watcher,
-                                 gboolean   active)
-{
-	if (active != watcher->priv->active)
-	{
-		/* reset state */
-		_gs_watcher_reset_state (watcher);
-
-		watcher->priv->active = (active != FALSE);
-	}
-
-	return TRUE;
-}
-
-gboolean
-gs_watcher_set_active (GSWatcher *watcher,
-                       gboolean   active)
-{
-	g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
-
-	gs_debug ("turning watcher: %s", active ? "ON" : "OFF");
-
-	if (watcher->priv->active == active)
-	{
-		gs_debug ("Idle detection is already %s",
-		          active ? "active" : "inactive");
-		return FALSE;
-	}
-
-	if (! watcher->priv->enabled)
-	{
-		gs_debug ("Idle detection is disabled, cannot activate");
-		return FALSE;
-	}
-
-	return _gs_watcher_set_active_internal (watcher, active);
-}
-
-gboolean
-gs_watcher_set_enabled (GSWatcher *watcher,
-                        gboolean   enabled)
-{
-	g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
-
-	if (watcher->priv->enabled != enabled)
-	{
-		gboolean is_active = gs_watcher_get_active (watcher);
-
-		watcher->priv->enabled = (enabled != FALSE);
-
-		/* if we are disabling the watcher and we are
-		   active shut it down */
-		if (! enabled && is_active)
-		{
-			_gs_watcher_set_active_internal (watcher, FALSE);
-		}
-	}
-
-	return TRUE;
-}
-
-gboolean
-gs_watcher_get_enabled (GSWatcher *watcher)
-{
-	gboolean enabled;
-
-	g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
-
-	enabled = watcher->priv->enabled;
-
-	return enabled;
-}
-
-static gboolean
-on_idle_timeout (GSWatcher *watcher)
-{
+	GSWatcher *watcher = GS_WATCHER (x11);
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
 	gboolean res;
 
 	res = _gs_watcher_set_session_idle (watcher, TRUE);
@@ -346,20 +117,22 @@ on_idle_timeout (GSWatcher *watcher)
 	/* try again if we failed i guess */
 	if (res)
 	{
-		watcher->priv->idle_id = 0;
+		priv->idle_id = 0;
 	}
-	return !res;
 }
 
 static void
-set_status (GSWatcher *watcher,
-            guint      status)
+set_status (GSWatcherX11 *x11,
+            guint         status)
 {
+	GSWatcher *watcher = GS_WATCHER (x11);
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
 	gboolean is_idle;
 
 	if (! watcher->priv->active)
 	{
 		gs_debug ("GSWatcher: not active, ignoring status changes");
+		/* no change in idleness */
 		return;
 	}
 
@@ -367,7 +140,6 @@ set_status (GSWatcher *watcher,
 
 	if (!is_idle && !watcher->priv->idle_notice)
 	{
-		/* no change in idleness */
 		return;
 	}
 
@@ -375,22 +147,18 @@ set_status (GSWatcher *watcher,
 	{
 		_gs_watcher_set_session_idle_notice (watcher, is_idle);
 		/* queue an activation */
-		if (watcher->priv->idle_id > 0)
+		if (priv->idle_id > 0)
 		{
-			g_source_remove (watcher->priv->idle_id);
+			g_source_remove (priv->idle_id);
 		}
-		watcher->priv->idle_id = g_timeout_add (watcher->priv->delta_notice_timeout,
-		                                        (GSourceFunc)on_idle_timeout,
-		                                        watcher);
+		priv->idle_id = g_timeout_add (priv->delta_notice_timeout,
+		                              (GSourceFunc)on_idle_timeout,
+		                              x11);
 	}
+	/* cancel notice too */
 	else
 	{
-		/* cancel notice too */
-		if (watcher->priv->idle_id > 0)
-		{
-			g_source_remove (watcher->priv->idle_id);
-			watcher->priv->idle_id = 0;
-		}
+		remove_idle_id (x11);
 		_gs_watcher_set_session_idle (watcher, FALSE);
 		_gs_watcher_set_session_idle_notice (watcher, FALSE);
 	}
@@ -399,21 +167,22 @@ set_status (GSWatcher *watcher,
 static void
 on_presence_status_changed (DBusGProxy    *presence_proxy,
                             guint          status,
-                            GSWatcher     *watcher)
+                            GSWatcherX11  *x11)
 {
-	set_status (watcher, status);
+	set_status (x11, status);
 }
 
 static void
 on_presence_status_text_changed (DBusGProxy    *presence_proxy,
                                  const char    *status_text,
-                                 GSWatcher     *watcher)
+                                 GSWatcherX11  *x11)
 {
-	set_status_text (watcher, status_text);
+	GSWatcher *watcher = GS_WATCHER (x11);
+	g_object_set (watcher, "status-message", status_text, NULL);
 }
 
 static gboolean
-connect_presence_watcher (GSWatcher *watcher)
+connect_presence_watcher (GSWatcherX11 *x11)
 {
 	DBusGConnection   *bus;
 	GError            *error;
@@ -431,35 +200,35 @@ connect_presence_watcher (GSWatcher *watcher)
 	}
 
 	error = NULL;
-	watcher->priv->presence_proxy = dbus_g_proxy_new_for_name_owner (bus,
+	WATCHER_X11_GET_PRIVATE(x11)->presence_proxy = dbus_g_proxy_new_for_name_owner (bus,
 	                                "org.gnome.SessionManager",
 	                                "/org/gnome/SessionManager/Presence",
 	                                "org.gnome.SessionManager.Presence",
 	                                &error);
-	if (watcher->priv->presence_proxy != NULL)
+	if (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy != NULL)
 	{
 		DBusGProxy *proxy;
 
-		dbus_g_proxy_add_signal (watcher->priv->presence_proxy,
+		dbus_g_proxy_add_signal (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy,
 		                         "StatusChanged",
 		                         G_TYPE_UINT,
 		                         G_TYPE_INVALID);
-		dbus_g_proxy_connect_signal (watcher->priv->presence_proxy,
+		dbus_g_proxy_connect_signal (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy,
 		                             "StatusChanged",
 		                             G_CALLBACK (on_presence_status_changed),
-		                             watcher,
+		                             x11,
 		                             NULL);
-		dbus_g_proxy_add_signal (watcher->priv->presence_proxy,
+		dbus_g_proxy_add_signal (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy,
 		                         "StatusTextChanged",
 		                         G_TYPE_STRING,
 		                         G_TYPE_INVALID);
-		dbus_g_proxy_connect_signal (watcher->priv->presence_proxy,
+		dbus_g_proxy_connect_signal (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy,
 		                             "StatusTextChanged",
 		                             G_CALLBACK (on_presence_status_text_changed),
-		                             watcher,
+		                             x11,
 		                             NULL);
 
-		proxy = dbus_g_proxy_new_from_proxy (watcher->priv->presence_proxy,
+		proxy = dbus_g_proxy_new_from_proxy (WATCHER_X11_GET_PRIVATE(x11)->presence_proxy,
 		                                     "org.freedesktop.DBus.Properties",
 		                                     "/org/gnome/SessionManager/Presence");
 		if (proxy != NULL)
@@ -514,8 +283,8 @@ connect_presence_watcher (GSWatcher *watcher)
 				status_text = g_value_get_string (&value);
 			}
 
-			set_status (watcher, status);
-			set_status_text (watcher, status_text);
+			set_status (x11, status);
+			g_object_set (GS_WATCHER (x11), "status-message", status_text, NULL);
 		}
 	}
 	else
@@ -531,60 +300,11 @@ done:
 	return ret;
 }
 
-static void
-gs_watcher_init (GSWatcher *watcher)
-{
-	watcher->priv = gs_watcher_get_instance_private (watcher);
-
-	watcher->priv->enabled = TRUE;
-	watcher->priv->active = FALSE;
-
-	connect_presence_watcher (watcher);
-
-	/* time before idle signal to send notice signal */
-	watcher->priv->delta_notice_timeout = 10000;
-
-	add_watchdog_timer (watcher, 600000);
-}
-
-static void
-gs_watcher_finalize (GObject *object)
-{
-	GSWatcher *watcher;
-
-	g_return_if_fail (object != NULL);
-	g_return_if_fail (GS_IS_WATCHER (object));
-
-	watcher = GS_WATCHER (object);
-
-	g_return_if_fail (watcher->priv != NULL);
-
-	remove_watchdog_timer (watcher);
-
-	if (watcher->priv->idle_id > 0)
-	{
-		g_source_remove (watcher->priv->idle_id);
-		watcher->priv->idle_id = 0;
-	}
-
-	watcher->priv->active = FALSE;
-
-	if (watcher->priv->presence_proxy != NULL)
-	{
-		g_object_unref (watcher->priv->presence_proxy);
-	}
-
-	g_free (watcher->priv->status_message);
-
-	G_OBJECT_CLASS (gs_watcher_parent_class)->finalize (object);
-}
-
 /* Figuring out what the appropriate XSetScreenSaver() parameters are
    (one wouldn't expect this to be rocket science.)
 */
 static void
-disable_builtin_screensaver (GSWatcher *watcher,
-                             gboolean   unblank_screen)
+disable_builtin_screensaver (gboolean unblank_screen)
 {
 	int current_server_timeout, current_server_interval;
 	int current_prefer_blank,   current_allow_exp;
@@ -603,12 +323,10 @@ disable_builtin_screensaver (GSWatcher *watcher,
 	desired_allow_exp       = current_allow_exp;
 
 	desired_server_interval = 0;
-
 	/* I suspect (but am not sure) that DontAllowExposures might have
 	   something to do with powering off the monitor as well, at least
 	   on some systems that don't support XDPMS?  Who know... */
 	desired_allow_exp = AllowExposures;
-
 	/* When we're not using an extension, set the server-side timeout to 0,
 	   so that the server never gets involved with screen blanking, and we
 	   do it all ourselves.  (However, when we *are* using an extension,
@@ -622,7 +340,6 @@ disable_builtin_screensaver (GSWatcher *watcher,
 	        || desired_prefer_blank    != current_prefer_blank
 	        || desired_allow_exp       != current_allow_exp)
 	{
-
 		gs_debug ("disabling server builtin screensaver:"
 		          " (xset s %d %d; xset s %s; xset s %s)",
 		          desired_server_timeout,
@@ -657,23 +374,78 @@ disable_builtin_screensaver (GSWatcher *watcher,
    heinousness.)
 
  */
-
 static gboolean
-watchdog_timer (GSWatcher *watcher)
+watchdog_timer (GSWatcherX11 *x11)
 {
-
-	disable_builtin_screensaver (watcher, FALSE);
-
+	disable_builtin_screensaver (FALSE);
 	return TRUE;
 }
 
-GSWatcher *
-gs_watcher_new (void)
+static void
+gs_watcher_x11_activate_monitoring (GSWatcher *watcher,
+                                    guint      timeout_ms)
 {
-	GSWatcher *watcher;
+	GSWatcherX11 *x11 = GS_WATCHER_X11 (watcher);
 
-	watcher = g_object_new (GS_TYPE_WATCHER,
-	                        NULL);
+	gs_debug ("X11: activating idle monitoring");
 
-	return GS_WATCHER (watcher);
+	disable_builtin_screensaver (TRUE);
+	add_watchdog_timer (x11, 600000);
+}
+
+static void
+gs_watcher_x11_deactivate_monitoring (GSWatcher *watcher)
+{
+	GSWatcherX11 *x11 = GS_WATCHER_X11 (watcher);
+
+	gs_debug ("X11: deactivating idle monitoring");
+
+	remove_idle_id (x11);
+	remove_watchdog_timer (x11);
+}
+
+static void
+gs_watcher_x11_class_init (GSWatcherX11Class *klass)
+{
+	GSWatcherClass *watcher_class = GS_WATCHER_CLASS (klass);
+
+	watcher_class->activate_monitoring = gs_watcher_x11_activate_monitoring;
+	watcher_class->deactivate_monitoring = gs_watcher_x11_deactivate_monitoring;
+}
+
+static void
+gs_watcher_x11_init (GSWatcherX11 *x11)
+{
+	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
+
+	priv->presence_proxy = NULL;
+	priv->watchdog_timer_id = 0;
+	priv->idle_id = 0;
+	priv->delta_notice_timeout = 10000;
+
+	connect_presence_watcher (x11);
+}
+
+static void
+gs_watcher_x11_finalize (GObject *object)
+{
+	GSWatcherX11 *x11;
+	GSWatcherX11Private *priv;
+
+	g_return_if_fail (object != NULL);
+	g_return_if_fail (GS_IS_WATCHER_X11 (object));
+
+	x11 = GS_WATCHER_X11 (object);
+	priv = WATCHER_X11_GET_PRIVATE (x11);
+
+	remove_idle_id (x11);
+	remove_watchdog_timer (x11);
+
+	if (priv->presence_proxy != NULL)
+	{
+		g_object_unref (priv->presence_proxy);
+		priv->presence_proxy = NULL;
+	}
+
+	G_OBJECT_CLASS (gs_watcher_x11_parent_class)->finalize (object);
 }

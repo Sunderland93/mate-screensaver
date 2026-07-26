@@ -1318,7 +1318,11 @@ constrain_list_size (GtkWidget      *widget,
 #ifdef ENABLE_X11
 	max_height = (HeightOfScreen (gdk_x11_screen_get_xscreen (gtk_widget_get_screen (widget)))) / 4;
 #else
-	max_height = gdk_monitor_get_height (gdk_display_get_monitor_at_window (gdk_display_get_default (), gtk_widget_get_window (widget))) / 4;
+	{
+		GdkRectangle rect;
+		gdk_monitor_get_geometry (gdk_display_get_monitor_at_window (gdk_display_get_default (), gtk_widget_get_window (widget)), &rect);
+		max_height = rect.height / 4;
+	}
 #endif
 
 	gtk_widget_get_preferred_size (to_size, &req, NULL);

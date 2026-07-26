@@ -50,6 +50,10 @@ AC_ARG_ENABLE(wayland,
   [enable_wayland=$enableval], [enable_wayland=no])
 
 dnl
+dnl Both X11 and Wayland can be enabled simultaneously for runtime session switching
+dnl
+
+dnl
 dnl Enable gsettings schema macros
 dnl
 

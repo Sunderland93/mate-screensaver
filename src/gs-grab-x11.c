@@ -1,7 +1,7 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*-
  *
  * Copyright (C) 2004-2006 William Jon McCann <mccann@jhu.edu>
- * Copyright (C) 2012-2021 MATE Developers
+ * Copyright (C) 2012-2026 MATE Developers
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -34,11 +34,9 @@
 #include "gs-grab.h"
 #include "gs-debug.h"
 
-static void     gs_grab_finalize   (GObject     *object);
+typedef struct GSGrabX11Private GSGrabX11Private;
 
-static gpointer grab_object = NULL;
-
-struct GSGrabPrivate
+struct GSGrabX11Private
 {
 	GdkWindow  *grab_window;
 	GdkDisplay *grab_display;
@@ -48,7 +46,23 @@ struct GSGrabPrivate
 	GtkWidget *invisible;
 };
 
-G_DEFINE_TYPE_WITH_PRIVATE (GSGrab, gs_grab, G_TYPE_OBJECT)
+typedef struct
+{
+	GSGrab parent;
+} GSGrabX11;
+
+typedef struct
+{
+	GSGrabClass parent_class;
+} GSGrabX11Class;
+
+G_DEFINE_TYPE_WITH_PRIVATE (GSGrabX11, gs_grab_x11, GS_TYPE_GRAB)
+
+#define GS_GRAB_X11(o)      (G_TYPE_CHECK_INSTANCE_CAST ((o), GS_TYPE_GRAB_X11, GSGrabX11))
+#define GS_IS_GRAB_X11(o)   (G_TYPE_CHECK_INSTANCE_TYPE ((o), GS_TYPE_GRAB_X11))
+#define GS_TYPE_GRAB_X11    (gs_grab_x11_get_type ())
+
+#define GRAB_X11_GET_PRIVATE(o) ((GSGrabX11Private *)gs_grab_x11_get_instance_private (GS_GRAB_X11 (o)))
 
 static const char *
 grab_string (int status)
@@ -97,6 +111,7 @@ gs_grab_get (GSGrab     *grab,
              gboolean    no_pointer_grab,
              gboolean    hide_cursor)
 {
+	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
 	GdkGrabStatus status;
 	GdkSeat      *seat;
 	GdkSeatCapabilities caps;
@@ -122,9 +137,6 @@ gs_grab_get (GSGrab     *grab,
 	                        prepare_window_grab_cb,
 	                        NULL);
 
-	/* make it release grabbed pointer if requested and if any;
-	   time between grabbing and ungrabbing is minimal as grab was already
-	   completed once */
 	if (status == GDK_GRAB_SUCCESS && no_pointer_grab &&
 	    gdk_display_device_is_grabbed (display, gdk_seat_get_pointer (seat)))
 	{
@@ -138,19 +150,19 @@ gs_grab_get (GSGrab     *grab,
 
 	if (status == GDK_GRAB_SUCCESS)
 	{
-		if (grab->priv->grab_window != NULL)
+		if (priv->grab_window != NULL)
 		{
-			g_object_remove_weak_pointer (G_OBJECT (grab->priv->grab_window),
-			                              (gpointer *) &grab->priv->grab_window);
+			g_object_remove_weak_pointer (G_OBJECT (priv->grab_window),
+			                              (gpointer *) &priv->grab_window);
 		}
-		grab->priv->grab_window = window;
+		priv->grab_window = window;
 
-		g_object_add_weak_pointer (G_OBJECT (grab->priv->grab_window),
-		                           (gpointer *) &grab->priv->grab_window);
+		g_object_add_weak_pointer (G_OBJECT (priv->grab_window),
+		                           (gpointer *) &priv->grab_window);
 
-		grab->priv->grab_display = display;
-		grab->priv->no_pointer_grab = (no_pointer_grab != FALSE);
-		grab->priv->hide_cursor = (hide_cursor != FALSE);
+		priv->grab_display = display;
+		priv->no_pointer_grab = (no_pointer_grab != FALSE);
+		priv->hide_cursor = (hide_cursor != FALSE);
 	}
 
 	g_object_unref (G_OBJECT (cursor));
@@ -158,21 +170,24 @@ gs_grab_get (GSGrab     *grab,
 	return status;
 }
 
-void
-gs_grab_reset (GSGrab *grab)
+static void
+x11_grab_reset (GSGrab *grab)
 {
-	if (grab->priv->grab_window != NULL)
+	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
+
+	if (priv->grab_window != NULL)
 	{
-		g_object_remove_weak_pointer (G_OBJECT (grab->priv->grab_window),
-		                              (gpointer *) &grab->priv->grab_window);
+		g_object_remove_weak_pointer (G_OBJECT (priv->grab_window),
+		                              (gpointer *) &priv->grab_window);
 	}
-	grab->priv->grab_window = NULL;
-	grab->priv->grab_display = NULL;
+	priv->grab_window = NULL;
+	priv->grab_display = NULL;
 }
 
-void
-gs_grab_release (GSGrab *grab, gboolean flush)
+static void
+x11_grab_release (GSGrab *grab, gboolean flush)
 {
+	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
 	GdkDisplay *display;
 	GdkSeat    *seat;
 
@@ -183,12 +198,10 @@ gs_grab_release (GSGrab *grab, gboolean flush)
 
 	gdk_seat_ungrab (seat);
 
-	gs_grab_reset (grab);
+	x11_grab_reset (grab);
 
-	/* FIXME: decide when this is good and when not */
 	if (flush)
 	{
-		/* FIXME: is it right to enable this? */
 		xorg_lock_smasher_set_active (grab, TRUE);
 
 		gdk_display_sync (display);
@@ -203,42 +216,42 @@ gs_grab_move (GSGrab     *grab,
               gboolean    no_pointer_grab,
               gboolean    hide_cursor)
 {
+	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
 	int         result;
 	GdkWindow  *old_window;
 	GdkDisplay *old_display;
 	gboolean    old_hide_cursor;
 
-	if (grab->priv->grab_window == window &&
-	    grab->priv->no_pointer_grab == no_pointer_grab)
+	if (priv->grab_window == window &&
+	    priv->no_pointer_grab == no_pointer_grab)
 	{
 		gs_debug ("Window %X is already grabbed, skipping",
-		          (guint32) GDK_WINDOW_XID (grab->priv->grab_window));
+		          (guint32) GDK_WINDOW_XID (priv->grab_window));
 		return TRUE;
 	}
 
-	if (grab->priv->grab_window != NULL)
+	if (priv->grab_window != NULL)
 	{
 		gs_debug ("Moving devices grab from %X to %X",
-		          (guint32) GDK_WINDOW_XID (grab->priv->grab_window),
+		          (guint32) GDK_WINDOW_XID (priv->grab_window),
 		          (guint32) GDK_WINDOW_XID (window));
 	}
 	else
 	{
 		gs_debug ("Getting devices grab on %X",
 		          (guint32) GDK_WINDOW_XID (window));
-
 	}
 
 	gs_debug ("*** doing X server grab");
 	gdk_x11_display_grab (display);
 
-	old_window = grab->priv->grab_window;
-	old_display = grab->priv->grab_display;
-	old_hide_cursor = grab->priv->hide_cursor;
+	old_window = priv->grab_window;
+	old_display = priv->grab_display;
+	old_hide_cursor = priv->hide_cursor;
 
 	if (old_window)
 	{
-		gs_grab_release (grab, FALSE);
+		x11_grab_release (grab, FALSE);
 	}
 
 	result = gs_grab_get (grab, window, display,
@@ -286,12 +299,12 @@ gs_grab_nuke_focus (GdkDisplay *display)
 	gdk_x11_display_error_trap_pop_ignored (display);
 }
 
-gboolean
-gs_grab_grab_window (GSGrab     *grab,
-                     GdkWindow  *window,
-                     GdkDisplay *display,
-                     gboolean    no_pointer_grab,
-                     gboolean    hide_cursor)
+static gboolean
+x11_grab_grab_window (GSGrab     *grab,
+                      GdkWindow  *window,
+                      GdkDisplay *display,
+                      gboolean    no_pointer_grab,
+                      gboolean    hide_cursor)
 {
 	gboolean    status = FALSE;
 	int         i;
@@ -307,11 +320,9 @@ gs_grab_grab_window (GSGrab     *grab,
 		}
 		else if (i == (int) (retries / 2))
 		{
-			/* try nuking focus in the middle */
 			gs_grab_nuke_focus (display);
 		}
 
-		/* else, wait a second and try to grab again */
 		g_usleep (G_USEC_PER_SEC);
 	}
 
@@ -319,20 +330,16 @@ gs_grab_grab_window (GSGrab     *grab,
 	{
 		gs_debug ("Couldn't grab devices!  (%s)",
 		          grab_string (status));
-
-		/* do not blank without a devices grab */
 		return FALSE;
 	}
 
-	/* grab is good, go ahead and blank  */
 	return TRUE;
 }
 
-/* this is used to grab devices to the root */
-gboolean
-gs_grab_grab_root (GSGrab  *grab,
-                   gboolean no_pointer_grab,
-                   gboolean hide_cursor)
+static gboolean
+x11_grab_grab_root (GSGrab  *grab,
+                    gboolean no_pointer_grab,
+                    gboolean hide_cursor)
 {
 	GdkDisplay *display;
 	GdkWindow  *root;
@@ -347,18 +354,18 @@ gs_grab_grab_root (GSGrab  *grab,
 	gdk_device_get_position (device, &screen, NULL, NULL);
 	root = gdk_screen_get_root_window (screen);
 
-	res = gs_grab_grab_window (grab, root, display,
-	                           no_pointer_grab, hide_cursor);
+	res = x11_grab_grab_window (grab, root, display,
+	                            no_pointer_grab, hide_cursor);
 
 	return res;
 }
 
-/* this is used to grab devices to an offscreen window */
-gboolean
-gs_grab_grab_offscreen (GSGrab *grab,
-                        gboolean no_pointer_grab,
-                        gboolean hide_cursor)
+static gboolean
+x11_grab_grab_offscreen (GSGrab *grab,
+                         gboolean no_pointer_grab,
+                         gboolean hide_cursor)
 {
+	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
 	GdkWindow *window;
 	GdkDisplay *display;
 	GdkScreen  *screen;
@@ -366,22 +373,21 @@ gs_grab_grab_offscreen (GSGrab *grab,
 
 	gs_debug ("Grabbing an offscreen window");
 
-	window = gtk_widget_get_window (GTK_WIDGET (grab->priv->invisible));
-	screen = gtk_invisible_get_screen (GTK_INVISIBLE (grab->priv->invisible));
+	window = gtk_widget_get_window (GTK_WIDGET (priv->invisible));
+	screen = gtk_invisible_get_screen (GTK_INVISIBLE (priv->invisible));
 	display = gdk_screen_get_display (screen);
-	res = gs_grab_grab_window (grab, window, display,
-	                           no_pointer_grab, hide_cursor);
+	res = x11_grab_grab_window (grab, window, display,
+	                            no_pointer_grab, hide_cursor);
 
 	return res;
 }
 
-/* this is similar to gs_grab_grab_window but doesn't fail */
-void
-gs_grab_move_to_window (GSGrab     *grab,
-                        GdkWindow  *window,
-                        GdkDisplay *display,
-                        gboolean    no_pointer_grab,
-                        gboolean    hide_cursor)
+static void
+x11_grab_move_to_window (GSGrab     *grab,
+                         GdkWindow  *window,
+                         GdkDisplay *display,
+                         gboolean    no_pointer_grab,
+                         gboolean    hide_cursor)
 {
 	gboolean result = FALSE;
 
@@ -398,54 +404,30 @@ gs_grab_move_to_window (GSGrab     *grab,
 }
 
 static void
-gs_grab_class_init (GSGrabClass *klass)
+gs_grab_x11_class_init (GSGrabX11Class *klass)
 {
-	GObjectClass   *object_class = G_OBJECT_CLASS (klass);
+	GSGrabClass *grab_class = GS_GRAB_CLASS (klass);
+	GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
-	object_class->finalize = gs_grab_finalize;
+	grab_class->release = x11_grab_release;
+	grab_class->grab_window = x11_grab_grab_window;
+	grab_class->grab_root = x11_grab_grab_root;
+	grab_class->grab_offscreen = x11_grab_grab_offscreen;
+	grab_class->move_to_window = x11_grab_move_to_window;
+	grab_class->reset = x11_grab_reset;
 }
 
 static void
-gs_grab_init (GSGrab *grab)
+gs_grab_x11_init (GSGrabX11 *x11)
 {
-	grab->priv = gs_grab_get_instance_private (grab);
+	GSGrabX11Private *priv;
 
-	grab->priv->no_pointer_grab = FALSE;
-	grab->priv->hide_cursor = FALSE;
-	grab->priv->invisible = gtk_invisible_new ();
-	gtk_widget_show (grab->priv->invisible);
+	priv = gs_grab_x11_get_instance_private (x11);
+
+	priv->no_pointer_grab = FALSE;
+	priv->hide_cursor = FALSE;
+	priv->invisible = gtk_invisible_new ();
+	gtk_widget_show (priv->invisible);
 }
 
-static void
-gs_grab_finalize (GObject *object)
-{
-	GSGrab *grab;
 
-	g_return_if_fail (object != NULL);
-	g_return_if_fail (GS_IS_GRAB (object));
-
-	grab = GS_GRAB (object);
-
-	g_return_if_fail (grab->priv != NULL);
-
-	gtk_widget_destroy (grab->priv->invisible);
-
-	G_OBJECT_CLASS (gs_grab_parent_class)->finalize (object);
-}
-
-GSGrab *
-gs_grab_new (void)
-{
-	if (grab_object)
-	{
-		g_object_ref (grab_object);
-	}
-	else
-	{
-		grab_object = g_object_new (GS_TYPE_GRAB, NULL);
-		g_object_add_weak_pointer (grab_object,
-		                           (gpointer *) &grab_object);
-	}
-
-	return GS_GRAB (grab_object);
-}

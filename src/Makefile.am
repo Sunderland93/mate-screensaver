@@ -129,28 +129,25 @@ test_passwd_LDADD +=	\
 endif
 
 if ENABLE_X11
-test_watcher_SOURCES =			\
+X11_TEST_WATCHER_SOURCES =		\
 	test-watcher.c			\
+	gs-watcher.c			\
 	gs-watcher.h			\
+	gs-watcher-private.h		\
 	gs-watcher-x11.c		\
 	gs-marshal.c 			\
 	gs-marshal.h			\
 	gs-debug.c			\
 	gs-debug.h			\
 	$(NULL)
-endif
 
-test_watcher_LDADD =			\
-	$(MATE_SCREENSAVER_LIBS)	\
-	$(X11_LDADD)			\
-	$(WAYLAND_LDADD)		\
-	$(NULL)
-
-if ENABLE_X11
-test_window_SOURCES =			\
+X11_TEST_WINDOW_SOURCES =		\
 	test-window.c			\
+	gs-window.c			\
 	gs-window.h			\
+	gs-window-private.h		\
 	gs-window-x11.c			\
+	gs-grab.c			\
 	gs-grab-x11.c			\
 	gs-grab.h			\
 	gs-marshal.c 			\
@@ -161,6 +158,15 @@ test_window_SOURCES =			\
 	subprocs.h			\
 	$(NULL)
 endif
+
+test_watcher_SOURCES = $(X11_TEST_WATCHER_SOURCES) $(WAYLAND_TEST_WATCHER_SOURCES)
+test_window_SOURCES = $(X11_TEST_WINDOW_SOURCES) $(WAYLAND_TEST_WINDOW_SOURCES)
+
+test_watcher_LDADD =			\
+	$(MATE_SCREENSAVER_LIBS)	\
+	$(X11_LDADD)			\
+	$(WAYLAND_LDADD)		\
+	$(NULL)
 
 test_window_LDADD =			\
 	$(MATE_SCREENSAVER_LIBS)	\
@@ -234,13 +240,17 @@ CLEANFILES +=				\
 	ext-session-lock-client.h	\
 	$(NULL)
 
-ext-idle-notify-client.c ext-idle-notify-client.h: $(WAYLAND_PROTOCOLS_DATADIR)/ext-idle-notify/ext-idle-notify-v1.xml
-	$(AM_V_GEN) $(WAYLAND_SCANNER) private-code $< > ext-idle-notify-client.c
-	$(AM_V_GEN) $(WAYLAND_SCANNER) private-header $< > ext-idle-notify-client.h
+ext-idle-notify-client.c: $(WAYLAND_PROTOCOLS_DATADIR)/staging/ext-idle-notify/ext-idle-notify-v1.xml
+	$(AM_V_GEN) $(WAYLAND_SCANNER) private-code $< $@
 
-ext-session-lock-client.c ext-session-lock-client.h: $(WAYLAND_PROTOCOLS_DATADIR)/ext-session-lock/ext-session-lock-v1.xml
-	$(AM_V_GEN) $(WAYLAND_SCANNER) private-code $< > ext-session-lock-client.c
-	$(AM_V_GEN) $(WAYLAND_SCANNER) private-header $< > ext-session-lock-client.h
+ext-idle-notify-client.h: $(WAYLAND_PROTOCOLS_DATADIR)/staging/ext-idle-notify/ext-idle-notify-v1.xml
+	$(AM_V_GEN) $(WAYLAND_SCANNER) client-header $< $@
+
+ext-session-lock-client.c: $(WAYLAND_PROTOCOLS_DATADIR)/staging/ext-session-lock/ext-session-lock-v1.xml
+	$(AM_V_GEN) $(WAYLAND_SCANNER) private-code $< $@
+
+ext-session-lock-client.h: $(WAYLAND_PROTOCOLS_DATADIR)/staging/ext-session-lock/ext-session-lock-v1.xml
+	$(AM_V_GEN) $(WAYLAND_SCANNER) client-header $< $@
 endif
 
 if ENABLE_X11
@@ -265,15 +275,34 @@ WAYLAND_SOURCES =		\
 	gs-grab-wayland.c	\
 	$(NULL)
 
+WAYLAND_GEN_SOURCES =		\
+	ext-idle-notify-client.c	\
+	ext-session-lock-client.c	\
+	$(NULL)
+
 WAYLAND_LDADD =			\
 	$(WAYLAND_CLIENT_LIBS)	\
 	$(LIBWLEMBED_LIBS)	\
 	$(LIBWLEMBED_GTK3_LIBS)	\
 	$(GTK_LAYER_SHELL_LIBS)	\
 	$(NULL)
+
+WAYLAND_TEST_WATCHER_SOURCES =	\
+	gs-watcher-wayland.c	\
+	$(WAYLAND_GEN_SOURCES)	\
+	$(NULL)
+
+WAYLAND_TEST_WINDOW_SOURCES =	\
+	gs-window-wayland.c	\
+	gs-grab-wayland.c	\
+	$(WAYLAND_GEN_SOURCES)	\
+	$(NULL)
 else
 WAYLAND_SOURCES = $(NULL)
+WAYLAND_GEN_SOURCES = $(NULL)
 WAYLAND_LDADD = $(NULL)
+WAYLAND_TEST_WATCHER_SOURCES = $(NULL)
+WAYLAND_TEST_WINDOW_SOURCES = $(NULL)
 endif
 
 mate_screensaver_SOURCES =	\
@@ -285,7 +314,14 @@ mate_screensaver_SOURCES =	\
 	gs-listener-dbus.h	\
 	gs-manager.c		\
 	gs-manager.h		\
+	gs-window.c		\
 	gs-window.h		\
+	gs-watcher.c		\
+	gs-watcher.h		\
+	gs-watcher-private.h	\
+	gs-window-private.h	\
+	gs-grab.c		\
+	gs-grab.h		\
 	gs-prefs.c		\
 	gs-prefs.h		\
 	gs-theme-manager.c	\
@@ -296,7 +332,6 @@ mate_screensaver_SOURCES =	\
 	gs-debug.h		\
 	subprocs.c		\
 	subprocs.h		\
-	gs-grab.h		\
 	gs-fade.c		\
 	gs-fade.h		\
 	$(X11_SOURCES)		\

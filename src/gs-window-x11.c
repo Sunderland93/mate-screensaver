@@ -34,6 +34,7 @@
 #include <gtk/gtkx.h>
 
 #include "gs-window.h"
+#include "gs-window-private.h"
 #include "gs-marshal.h"
 #include "subprocs.h"
 #include "gs-debug.h"
@@ -42,7 +43,7 @@
 #include <X11/extensions/shape.h>
 #endif
 
-static void gs_window_finalize   (GObject       *object);
+static void gs_window_x11_finalize   (GObject       *object);
 
 static gboolean popup_dialog_idle (gpointer data);
 static void gs_window_dialog_finish (GSWindow *window);
@@ -58,89 +59,29 @@ enum
 #define INFO_BAR_SECONDS 30
 #define MATE_SCREENSAVER_DIALOG_PATH LIBEXECDIR "/mate-screensaver-dialog"
 
-struct GSWindowPrivate
+typedef struct GSWindowX11Private GSWindowX11Private;
+
+struct GSWindowX11Private
 {
-	GdkMonitor *monitor;
-
-	GdkRectangle geometry;
-	guint      obscured : 1;
-	guint      dialog_up : 1;
-
-	guint      lock_enabled : 1;
-	guint      user_switch_enabled : 1;
-	guint      logout_enabled : 1;
-	guint      keyboard_enabled : 1;
-
-	guint64    logout_timeout;
-	char      *logout_command;
-	char      *keyboard_command;
-	char      *status_message;
-
-	GtkWidget *vbox;
-	GtkWidget *drawing_area;
-	GtkWidget *lock_box;
-	GtkWidget *lock_socket;
-	GtkWidget *keyboard_socket;
-	GtkWidget *info_bar;
-	GtkWidget *info_content;
-
-	cairo_surface_t *background_surface;
-
-	guint      popup_dialog_idle_id;
-
-	guint      dialog_map_signal_id;
-	guint      dialog_unmap_signal_id;
-	guint      dialog_response_signal_id;
-
-	guint      watchdog_timer_id;
-	guint      info_bar_timer_id;
-
-	gint       lock_pid;
-	gint       lock_watch_id;
-	gint       dialog_response;
-	gboolean   dialog_quit_requested;
-	gboolean   dialog_shake_in_progress;
-
-	gint       keyboard_pid;
-	gint       keyboard_watch_id;
-
-	GList     *key_events;
-
-	gdouble    last_x;
-	gdouble    last_y;
-
-	GTimer    *timer;
-
-#ifdef HAVE_SHAPE_EXT
-	int        shape_event_base;
-#endif
+	int dummy;
 };
 
-enum
+typedef struct
 {
-    ACTIVITY,
-    DEACTIVATED,
-    LAST_SIGNAL
-};
+	GSWindow parent;
+} GSWindowX11;
 
-enum
+typedef struct
 {
-    PROP_0,
-    PROP_OBSCURED,
-    PROP_DIALOG_UP,
-    PROP_LOCK_ENABLED,
-    PROP_LOGOUT_ENABLED,
-    PROP_KEYBOARD_ENABLED,
-    PROP_KEYBOARD_COMMAND,
-    PROP_LOGOUT_COMMAND,
-    PROP_LOGOUT_TIMEOUT,
-    PROP_MONITOR,
-    PROP_STATUS_MESSAGE
-};
+	GSWindowClass parent_class;
+} GSWindowX11Class;
 
-static guint           signals [LAST_SIGNAL] = { 0, };
+G_DEFINE_TYPE_WITH_PRIVATE (GSWindowX11, gs_window_x11, GS_TYPE_WINDOW)
 
-G_DEFINE_TYPE_WITH_PRIVATE (GSWindow, gs_window, GTK_TYPE_WINDOW)
+#define GS_WINDOW_X11(o)      (G_TYPE_CHECK_INSTANCE_CAST ((o), GS_TYPE_WINDOW_X11, GSWindowX11))
+#define GS_IS_WINDOW_X11(o)   (G_TYPE_CHECK_INSTANCE_TYPE ((o), GS_TYPE_WINDOW_X11))
+#define GS_TYPE_WINDOW_X11    (gs_window_x11_get_type ())
+#define GS_WINDOW_X11_GET_PRIVATE(o) ((GSWindowX11Private *)gs_window_x11_get_instance_private (GS_WINDOW_X11 (o)))
 
 static void
 set_invisible_cursor (GdkWindow *window,
@@ -243,52 +184,6 @@ widget_clear_all_children (GtkWidget *widget)
 
 	gdk_x11_display_error_trap_pop_ignored (display);
 
-}
-
-void
-gs_window_set_background_surface (GSWindow        *window,
-                                  cairo_surface_t *surface)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	if (window->priv->background_surface != NULL)
-	{
-		cairo_surface_destroy (window->priv->background_surface);
-	}
-	window->priv->background_surface = NULL;
-
-	if (surface != NULL)
-	{
-		window->priv->background_surface = cairo_surface_reference (surface);
-	}
-
-	gtk_widget_queue_draw (GTK_WIDGET (window));
-}
-
-void
-gs_window_clear (GSWindow *window)
-{
-	GdkDisplay *display;
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	gs_debug ("Clearing widgets");
-
-	if (gtk_widget_get_realized (GTK_WIDGET (window)))
-	{
-		gtk_widget_queue_draw (GTK_WIDGET (window));
-		/* If a screensaver theme adds child windows
-		   we need to clear them too */
-		widget_clear_all_children (GTK_WIDGET (window));
-	}
-
-	if (gtk_widget_get_realized (window->priv->drawing_area))
-	{
-		gtk_widget_queue_draw (window->priv->drawing_area);
-		widget_clear_all_children (window->priv->drawing_area);
-	}
-
-	display = gtk_widget_get_display (GTK_WIDGET(window));
-	gdk_display_flush (display);
 }
 
 static cairo_region_t *
@@ -422,9 +317,9 @@ gs_window_real_unrealize (GtkWidget *widget)
 	g_signal_handlers_disconnect_by_func (monitor, monitor_geometry_notify,
 	                                      widget);
 
-	if (GTK_WIDGET_CLASS (gs_window_parent_class)->unrealize)
+	if (GTK_WIDGET_CLASS (gs_window_x11_parent_class)->unrealize)
 	{
-		GTK_WIDGET_CLASS (gs_window_parent_class)->unrealize (widget);
+		GTK_WIDGET_CLASS (gs_window_x11_parent_class)->unrealize (widget);
 	}
 }
 
@@ -576,9 +471,9 @@ gs_window_real_realize (GtkWidget *widget)
 
 	widget_set_best_visual (widget);
 
-	if (GTK_WIDGET_CLASS (gs_window_parent_class)->realize)
+	if (GTK_WIDGET_CLASS (gs_window_x11_parent_class)->realize)
 	{
-		GTK_WIDGET_CLASS (gs_window_parent_class)->realize (widget);
+		GTK_WIDGET_CLASS (gs_window_x11_parent_class)->realize (widget);
 	}
 
 	gs_window_override_user_time (GS_WINDOW (widget));
@@ -641,7 +536,7 @@ add_popup_dialog_idle (GSWindow *window)
 static gboolean
 emit_deactivated_idle (GSWindow *window)
 {
-	g_signal_emit (window, signals [DEACTIVATED], 0);
+	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_DEACTIVATED], 0);
 
 	return FALSE;
 }
@@ -825,13 +720,13 @@ gs_window_real_draw (GtkWidget *widget,
 }
 
 static void
-gs_window_real_show (GtkWidget *widget)
+gs_window_real_show (GSWindow *window)
 {
-	GSWindow *window;
+	GtkWidget *widget = GTK_WIDGET (window);
 
-	if (GTK_WIDGET_CLASS (gs_window_parent_class)->show)
+	if (GTK_WIDGET_CLASS (gs_window_x11_parent_class)->show)
 	{
-		GTK_WIDGET_CLASS (gs_window_parent_class)->show (widget);
+		GTK_WIDGET_CLASS (gs_window_x11_parent_class)->show (widget);
 	}
 
 	gs_window_clear (GS_WINDOW (widget));
@@ -922,38 +817,6 @@ info_bar_timeout (GSWindow *window)
 	return FALSE;
 }
 
-void
-gs_window_show_message (GSWindow   *window,
-                        const char *summary,
-                        const char *body,
-                        const char *icon)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	set_info_text_and_icon (window,
-	                        icon,
-	                        summary,
-	                        body);
-	gtk_widget_show (window->priv->info_bar);
-
-	if (window->priv->info_bar_timer_id > 0)
-	{
-		g_source_remove (window->priv->info_bar_timer_id);
-	}
-
-	window->priv->info_bar_timer_id = g_timeout_add_seconds (INFO_BAR_SECONDS,
-	                                  (GSourceFunc)info_bar_timeout,
-	                                  window);
-}
-
-void
-gs_window_show (GSWindow *window)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	gtk_widget_show (GTK_WIDGET (window));
-}
-
 static void
 gs_window_real_hide (GtkWidget *widget)
 {
@@ -965,36 +828,10 @@ gs_window_real_hide (GtkWidget *widget)
 
 	remove_watchdog_timer (window);
 
-	if (GTK_WIDGET_CLASS (gs_window_parent_class)->hide)
+	if (GTK_WIDGET_CLASS (gs_window_x11_parent_class)->hide)
 	{
-		GTK_WIDGET_CLASS (gs_window_parent_class)->hide (widget);
+		GTK_WIDGET_CLASS (gs_window_x11_parent_class)->hide (widget);
 	}
-}
-
-void
-gs_window_destroy (GSWindow *window)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	gs_window_cancel_unlock_request (window);
-
-	gtk_widget_destroy (GTK_WIDGET (window));
-}
-
-GdkWindow *
-gs_window_get_gdk_window (GSWindow *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), NULL);
-
-	return gtk_widget_get_window (GTK_WIDGET (window));
-}
-
-GtkWidget *
-gs_window_get_drawing_area (GSWindow *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), NULL);
-
-	return window->priv->drawing_area;
 }
 
 /* just for debugging */
@@ -1758,279 +1595,6 @@ popup_dialog_idle (gpointer data)
 	return FALSE;
 }
 
-void
-gs_window_request_unlock (GSWindow *window)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	gs_debug ("Requesting unlock");
-
-	if (! gtk_widget_get_visible (GTK_WIDGET (window)))
-	{
-		gs_debug ("Request unlock but window is not visible!");
-		return;
-	}
-
-	if (window->priv->lock_watch_id > 0)
-	{
-		return;
-	}
-
-	if (! window->priv->lock_enabled)
-	{
-		add_emit_deactivated_idle (window);
-
-		return;
-	}
-
-	if (window->priv->popup_dialog_idle_id == 0)
-	{
-		add_popup_dialog_idle (window);
-	}
-
-	window_set_dialog_up (window, TRUE);
-}
-
-void
-gs_window_cancel_unlock_request (GSWindow  *window)
-{
-	/* FIXME: This is a bit of a hammer approach...
-	* Maybe we should send a delete-event to
-	 * the plug?
-	 */
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	popdown_dialog (window);
-}
-
-void
-gs_window_set_lock_enabled (GSWindow *window,
-                            gboolean  lock_enabled)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	if (window->priv->lock_enabled == lock_enabled)
-	{
-		return;
-	}
-
-	window->priv->lock_enabled = (lock_enabled != FALSE);
-	g_object_notify (G_OBJECT (window), "lock-enabled");
-}
-
-GdkDisplay *
-gs_window_get_display (GSWindow  *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), NULL);
-
-	return gtk_widget_get_display (GTK_WIDGET (window));
-}
-
-void
-gs_window_set_keyboard_enabled (GSWindow *window,
-                                gboolean  enabled)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	window->priv->keyboard_enabled = (enabled != FALSE);
-}
-
-void
-gs_window_set_keyboard_command (GSWindow   *window,
-                                const char *command)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	g_free (window->priv->keyboard_command);
-
-	if (command != NULL)
-	{
-		window->priv->keyboard_command = g_strdup (command);
-	}
-	else
-	{
-		window->priv->keyboard_command = NULL;
-	}
-}
-
-void
-gs_window_set_logout_enabled (GSWindow *window,
-                              gboolean  logout_enabled)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	window->priv->logout_enabled = (logout_enabled != FALSE);
-}
-
-void
-gs_window_set_user_switch_enabled (GSWindow *window,
-                                   gboolean  user_switch_enabled)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	window->priv->user_switch_enabled = (user_switch_enabled != FALSE);
-}
-
-void
-gs_window_set_logout_timeout (GSWindow *window,
-                              glong     logout_timeout)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	if (logout_timeout < 0)
-	{
-		window->priv->logout_timeout = 0;
-	}
-	else
-	{
-		window->priv->logout_timeout = logout_timeout;
-	}
-}
-
-void
-gs_window_set_logout_command (GSWindow   *window,
-                              const char *command)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	g_free (window->priv->logout_command);
-
-	if (command)
-	{
-		window->priv->logout_command = g_strdup (command);
-	}
-	else
-	{
-		window->priv->logout_command = NULL;
-	}
-}
-
-void
-gs_window_set_status_message (GSWindow   *window,
-                              const char *status_message)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	g_free (window->priv->status_message);
-	window->priv->status_message = g_strdup (status_message);
-}
-
-void
-gs_window_set_monitor (GSWindow   *window,
-                       GdkMonitor *monitor)
-{
-	g_return_if_fail (GS_IS_WINDOW (window));
-
-	if (window->priv->monitor == monitor)
-	{
-		return;
-	}
-
-	window->priv->monitor = monitor;
-
-	gtk_widget_queue_resize (GTK_WIDGET (window));
-
-	g_object_notify (G_OBJECT (window), "monitor");
-}
-
-GdkMonitor *
-gs_window_get_monitor (GSWindow *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), NULL);
-
-	return window->priv->monitor;
-}
-
-static void
-gs_window_set_property (GObject            *object,
-                        guint               prop_id,
-                        const GValue       *value,
-                        GParamSpec         *pspec)
-{
-	GSWindow *self;
-
-	self = GS_WINDOW (object);
-
-	switch (prop_id)
-	{
-	case PROP_LOCK_ENABLED:
-		gs_window_set_lock_enabled (self, g_value_get_boolean (value));
-		break;
-	case PROP_KEYBOARD_ENABLED:
-		gs_window_set_keyboard_enabled (self, g_value_get_boolean (value));
-		break;
-	case PROP_KEYBOARD_COMMAND:
-		gs_window_set_keyboard_command (self, g_value_get_string (value));
-		break;
-	case PROP_LOGOUT_ENABLED:
-		gs_window_set_logout_enabled (self, g_value_get_boolean (value));
-		break;
-	case PROP_LOGOUT_COMMAND:
-		gs_window_set_logout_command (self, g_value_get_string (value));
-		break;
-	case PROP_STATUS_MESSAGE:
-		gs_window_set_status_message (self, g_value_get_string (value));
-		break;
-	case PROP_LOGOUT_TIMEOUT:
-		gs_window_set_logout_timeout (self, g_value_get_long (value));
-		break;
-	case PROP_MONITOR:
-		gs_window_set_monitor (self, g_value_get_pointer (value));
-		break;
-	default:
-		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-		break;
-	}
-}
-
-static void
-gs_window_get_property (GObject    *object,
-                        guint       prop_id,
-                        GValue     *value,
-                        GParamSpec *pspec)
-{
-	GSWindow *self;
-
-	self = GS_WINDOW (object);
-
-	switch (prop_id)
-	{
-	case PROP_LOCK_ENABLED:
-		g_value_set_boolean (value, self->priv->lock_enabled);
-		break;
-	case PROP_KEYBOARD_ENABLED:
-		g_value_set_boolean (value, self->priv->keyboard_enabled);
-		break;
-	case PROP_KEYBOARD_COMMAND:
-		g_value_set_string (value, self->priv->keyboard_command);
-		break;
-	case PROP_LOGOUT_ENABLED:
-		g_value_set_boolean (value, self->priv->logout_enabled);
-		break;
-	case PROP_LOGOUT_COMMAND:
-		g_value_set_string (value, self->priv->logout_command);
-		break;
-	case PROP_STATUS_MESSAGE:
-		g_value_set_string (value, self->priv->status_message);
-		break;
-	case PROP_LOGOUT_TIMEOUT:
-		g_value_set_long (value, self->priv->logout_timeout);
-		break;
-	case PROP_MONITOR:
-		g_value_set_pointer (value, (gpointer) self->priv->monitor);
-		break;
-	case PROP_OBSCURED:
-		g_value_set_boolean (value, self->priv->obscured);
-		break;
-	case PROP_DIALOG_UP:
-		g_value_set_boolean (value, self->priv->dialog_up);
-		break;
-	default:
-		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-		break;
-	}
-}
-
 static void
 queue_key_event (GSWindow    *window,
                  GdkEventKey *event)
@@ -2069,7 +1633,7 @@ maybe_handle_activity (GSWindow *window)
 	if (! window->priv->lock_socket
 	        && gtk_widget_get_sensitive (GTK_WIDGET (window)))
 	{
-		g_signal_emit (window, signals [ACTIVITY], 0, &handled);
+		g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0, &handled);
 	}
 
 	return handled;
@@ -2092,9 +1656,9 @@ gs_window_real_key_press_event (GtkWidget   *widget,
 
 	queue_key_event (GS_WINDOW (widget), event);
 
-	if (GTK_WIDGET_CLASS (gs_window_parent_class)->key_press_event)
+	if (GTK_WIDGET_CLASS (gs_window_x11_parent_class)->key_press_event)
 	{
-		GTK_WIDGET_CLASS (gs_window_parent_class)->key_press_event (widget, event);
+		GTK_WIDGET_CLASS (gs_window_x11_parent_class)->key_press_event (widget, event);
 	}
 
 	return TRUE;
@@ -2253,21 +1817,7 @@ gs_window_real_grab_broken (GtkWidget          *widget,
 	return FALSE;
 }
 
-gboolean
-gs_window_is_obscured (GSWindow *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
 
-	return window->priv->obscured;
-}
-
-gboolean
-gs_window_is_dialog_up (GSWindow *window)
-{
-	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
-
-	return window->priv->dialog_up;
-}
 
 static void
 window_set_obscured (GSWindow *window,
@@ -2304,16 +1854,17 @@ gs_window_real_visibility_notify_event (GtkWidget          *widget,
 }
 
 static void
-gs_window_class_init (GSWindowClass *klass)
+gs_window_x11_class_init (GSWindowX11Class *klass)
 {
 	GObjectClass   *object_class = G_OBJECT_CLASS (klass);
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+	GSWindowClass  *window_class = GS_WINDOW_CLASS (klass);
 
-	object_class->finalize     = gs_window_finalize;
-	object_class->get_property = gs_window_get_property;
-	object_class->set_property = gs_window_set_property;
+	object_class->finalize     = gs_window_x11_finalize;
 
-	widget_class->show                = gs_window_real_show;
+	window_class->real_show = gs_window_real_show;
+	window_class->real_destroy = NULL;
+
 	widget_class->hide                = gs_window_real_hide;
 	widget_class->draw                = gs_window_real_draw;
 	widget_class->realize             = gs_window_real_realize;
@@ -2326,100 +1877,6 @@ gs_window_class_init (GSWindowClass *klass)
 	widget_class->get_preferred_height = gs_window_real_get_preferred_height;
 	widget_class->grab_broken_event   = gs_window_real_grab_broken;
 	widget_class->visibility_notify_event = gs_window_real_visibility_notify_event;
-
-	signals [ACTIVITY] =
-	    g_signal_new ("activity",
-	                  G_TYPE_FROM_CLASS (object_class),
-	                  G_SIGNAL_RUN_LAST,
-	                  G_STRUCT_OFFSET (GSWindowClass, activity),
-	                  NULL,
-	                  NULL,
-	                  gs_marshal_BOOLEAN__VOID,
-	                  G_TYPE_BOOLEAN,
-	                  0);
-	signals [DEACTIVATED] =
-	    g_signal_new ("deactivated",
-	                  G_TYPE_FROM_CLASS (object_class),
-	                  G_SIGNAL_RUN_LAST,
-	                  G_STRUCT_OFFSET (GSWindowClass, deactivated),
-	                  NULL,
-	                  NULL,
-	                  g_cclosure_marshal_VOID__VOID,
-	                  G_TYPE_NONE,
-	                  0);
-
-	g_object_class_install_property (object_class,
-	                                 PROP_OBSCURED,
-	                                 g_param_spec_boolean ("obscured",
-	                                         NULL,
-	                                         NULL,
-	                                         FALSE,
-	                                         G_PARAM_READABLE));
-	g_object_class_install_property (object_class,
-	                                 PROP_DIALOG_UP,
-	                                 g_param_spec_boolean ("dialog-up",
-	                                         NULL,
-	                                         NULL,
-	                                         FALSE,
-	                                         G_PARAM_READABLE));
-	g_object_class_install_property (object_class,
-	                                 PROP_LOCK_ENABLED,
-	                                 g_param_spec_boolean ("lock-enabled",
-	                                         NULL,
-	                                         NULL,
-	                                         FALSE,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_LOGOUT_ENABLED,
-	                                 g_param_spec_boolean ("logout-enabled",
-	                                         NULL,
-	                                         NULL,
-	                                         FALSE,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_LOGOUT_TIMEOUT,
-	                                 g_param_spec_long ("logout-timeout",
-	                                         NULL,
-	                                         NULL,
-	                                         -1,
-	                                         G_MAXLONG,
-	                                         0,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_LOGOUT_COMMAND,
-	                                 g_param_spec_string ("logout-command",
-	                                         NULL,
-	                                         NULL,
-	                                         NULL,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_STATUS_MESSAGE,
-	                                 g_param_spec_string ("status-message",
-	                                         NULL,
-	                                         NULL,
-	                                         NULL,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_KEYBOARD_ENABLED,
-	                                 g_param_spec_boolean ("keyboard-enabled",
-	                                         NULL,
-	                                         NULL,
-	                                         FALSE,
-	                                         G_PARAM_READWRITE));
-	g_object_class_install_property (object_class,
-	                                 PROP_KEYBOARD_COMMAND,
-	                                 g_param_spec_string ("keyboard-command",
-	                                         NULL,
-	                                         NULL,
-	                                         NULL,
-	                                         G_PARAM_READWRITE));
-
-	g_object_class_install_property (object_class,
-	                                 PROP_MONITOR,
-	                                 g_param_spec_pointer ("monitor",
-	                                         "Gdk monitor",
-	                                         "The monitor (in terms of Gdk) which the window is on",
-	                                         G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
 }
 
 static void
@@ -2442,9 +1899,9 @@ on_drawing_area_draw (GtkWidget *widget,
 }
 
 static void
-gs_window_init (GSWindow *window)
+gs_window_x11_init (GSWindowX11 *x11)
 {
-	window->priv = gs_window_get_instance_private (window);
+	GSWindow *window = GS_WINDOW (x11);
 
 	window->priv->geometry.x      = -1;
 	window->priv->geometry.y      = -1;
@@ -2489,7 +1946,6 @@ gs_window_init (GSWindow *window)
 	                  G_CALLBACK (on_drawing_area_draw),
 	                  NULL);
 	create_info_bar (window);
-
 }
 
 static void
@@ -2508,7 +1964,7 @@ remove_command_watches (GSWindow *window)
 }
 
 static void
-gs_window_finalize (GObject *object)
+gs_window_x11_finalize (GObject *object)
 {
 	GSWindow *window;
 
@@ -2518,9 +1974,6 @@ gs_window_finalize (GObject *object)
 	window = GS_WINDOW (object);
 
 	g_return_if_fail (window->priv != NULL);
-
-	g_free (window->priv->logout_command);
-	g_free (window->priv->keyboard_command);
 
 	if (window->priv->info_bar_timer_id > 0)
 	{
@@ -2547,18 +2000,21 @@ gs_window_finalize (GObject *object)
 		cairo_surface_destroy (window->priv->background_surface);
 	}
 
-	G_OBJECT_CLASS (gs_window_parent_class)->finalize (object);
+	/* Note: common fields (logout_command, keyboard_command, status_message)
+	 * are freed by the base class finalize */
+
+	G_OBJECT_CLASS (gs_window_x11_parent_class)->finalize (object);
 }
 
 GSWindow *
-gs_window_new (GdkMonitor *monitor,
-               gboolean   lock_enabled)
+gs_window_x11_new (GdkMonitor *monitor,
+                   gboolean   lock_enabled)
 {
 	GObject    *result;
 	GdkDisplay *display = gdk_monitor_get_display (monitor);
 	GdkScreen  *screen = gdk_display_get_default_screen (display);
 
-	result = g_object_new (GS_TYPE_WINDOW,
+	result = g_object_new (GS_TYPE_WINDOW_X11,
 	                       "type", GTK_WINDOW_POPUP,
 	                       "screen", screen,
 	                       "monitor", monitor,

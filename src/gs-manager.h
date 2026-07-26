@@ -26,6 +26,10 @@
 
 #include "gs-prefs.h"
 
+#ifdef ENABLE_WAYLAND
+#include <libwlembed-gtk3/libwlembed-gtk3.h>
+#endif
+
 G_BEGIN_DECLS
 
 #define GS_TYPE_MANAGER         (gs_manager_get_type ())
@@ -102,6 +106,10 @@ void        gs_manager_show_message         (GSManager  *manager,
         const char *icon);
 gboolean    gs_manager_request_unlock       (GSManager  *manager);
 void        gs_manager_cancel_unlock_request (GSManager *manager);
+
+#ifdef ENABLE_WAYLAND
+WleEmbeddedCompositor * gs_manager_get_compositor (GSManager *manager);
+#endif
 
 G_END_DECLS
 

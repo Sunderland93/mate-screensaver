@@ -20,17 +20,25 @@
 
 #include "config.h"
 
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <string.h>
+
 #include <gtk/gtk.h>
 
 #ifdef ENABLE_WAYLAND
 #include <gdk/gdkwayland.h>
 #include <wayland-client.h>
+#include <gtk-layer-shell.h>
+#include <libwlembed-gtk3/libwlembed-gtk3.h>
 #include "ext-idle-notify-client.h"
 #include "ext-session-lock-client.h"
 #endif
 
 #include "gs-window.h"
 #include "gs-window-private.h"
+#include "gs-manager.h"
 #include "gs-debug.h"
 
 #ifdef ENABLE_WAYLAND
@@ -50,6 +58,12 @@ struct GSWindowWaylandPrivate
 	struct ext_session_lock_surface_v1 *lock_surface;
 	gboolean                            is_locked;
 	gboolean                            locked_confirmed;
+
+	GtkWidget                          *socket;
+	GPid                                lock_pid;
+	gint                                lock_watch_id;
+	gint                                dialog_response;
+	gboolean                            dialog_quit_requested;
 
 	struct ext_idle_notification_v1    *idle_notification;
 	guint                               idle_timeout_id;
@@ -81,6 +95,14 @@ G_DEFINE_TYPE_WITH_PRIVATE (GSWindowWayland, gs_window_wayland, GS_TYPE_WINDOW)
 static void set_invisible_cursor (GdkWindow *window,
                                   gboolean   invisible);
 static void gs_window_wayland_finalize (GObject *object);
+
+static void popdown_dialog (GSWindow *window);
+
+enum
+{
+	DIALOG_RESPONSE_CANCEL,
+	DIALOG_RESPONSE_OK
+};
 
 static void
 set_invisible_cursor (GdkWindow *window,
@@ -130,6 +152,321 @@ static void
 add_emit_deactivated_idle (GSWindow *window)
 {
 	g_idle_add (emit_deactivated_idle, window);
+}
+
+static void
+remove_command_watches (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->lock_watch_id != 0)
+	{
+		g_source_remove (priv->lock_watch_id);
+		priv->lock_watch_id = 0;
+	}
+}
+
+static void
+gs_window_dialog_finish (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->lock_pid != 0)
+	{
+		g_spawn_close_pid (priv->lock_pid);
+		priv->lock_pid = 0;
+	}
+
+	remove_command_watches (window);
+}
+
+static void
+maybe_kill_dialog (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->lock_pid != 0 && !priv->dialog_quit_requested)
+	{
+		gs_debug ("Sending TERM to dialog process %d", priv->lock_pid);
+		kill (priv->lock_pid, SIGTERM);
+	}
+}
+
+static gboolean
+lock_command_watch (GIOChannel   *source,
+                    GIOCondition  condition,
+                    GSWindow     *window)
+{
+	GSWindowWaylandPrivate *priv;
+	gboolean                finished = FALSE;
+
+	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (condition & G_IO_IN)
+	{
+		GIOStatus status;
+		GError   *error = NULL;
+		char     *line;
+
+		line = NULL;
+		status = g_io_channel_read_line (source, &line, NULL, NULL, &error);
+
+		switch (status)
+		{
+		case G_IO_STATUS_NORMAL:
+			gs_debug ("command output: %s", line);
+
+			if (strstr (line, "RESPONSE=") != NULL)
+			{
+				if (strstr (line, "RESPONSE=OK") != NULL)
+				{
+					gs_debug ("Got OK response");
+					priv->dialog_response = DIALOG_RESPONSE_OK;
+				}
+				else
+				{
+					gs_debug ("Got CANCEL response");
+					priv->dialog_response = DIALOG_RESPONSE_CANCEL;
+				}
+				finished = TRUE;
+			}
+			else if (strstr (line, "NOTICE=") != NULL)
+			{
+				if (strstr (line, "NOTICE=AUTH FAILED") != NULL)
+				{
+					gs_debug ("Auth failed");
+				}
+			}
+			else if (strstr (line, "REQUEST QUIT") != NULL)
+			{
+				gs_debug ("Dialog requested quit");
+				priv->dialog_quit_requested = TRUE;
+				maybe_kill_dialog (window);
+			}
+			break;
+		case G_IO_STATUS_EOF:
+			gs_debug ("Got EOF from dialog");
+			finished = TRUE;
+			break;
+		default:
+			break;
+		}
+
+		g_free (line);
+	}
+	else if (condition & (G_IO_HUP | G_IO_ERR))
+	{
+		gs_debug ("Got HUP/ERR from dialog");
+		finished = TRUE;
+	}
+
+	if (finished)
+	{
+		gint response;
+
+		response = priv->dialog_response;
+
+		popdown_dialog (window);
+
+		if (response == DIALOG_RESPONSE_OK)
+		{
+			add_emit_deactivated_idle (window);
+		}
+
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static void
+create_lock_socket (GSWindow *window,
+                    guint32   id)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	priv->socket = wle_gtk_socket_new (gs_manager_get_compositor (NULL));
+	if (priv->socket == NULL)
+	{
+		gs_debug ("Failed to create WleGtkSocket");
+		return;
+	}
+
+	gtk_box_pack_start (GTK_BOX (priv->vbox), priv->socket, TRUE, TRUE, 0);
+	gtk_widget_show (priv->socket);
+
+	gs_debug ("Lock socket created");
+}
+
+static void
+popdown_dialog (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	gs_window_dialog_finish (window);
+
+	if (priv->socket != NULL)
+	{
+		gtk_widget_destroy (priv->socket);
+		priv->socket = NULL;
+	}
+
+	priv->dialog_quit_requested = FALSE;
+
+	wayland_window_set_dialog_up (window, FALSE);
+}
+
+static gboolean
+spawn_on_window (GSWindow     *window,
+                 const char   *command,
+                 GPid         *child_pid,
+                 GIOFunc       watch_func,
+                 gpointer      watch_data,
+                 gint         *watch_id)
+{
+	gboolean   result;
+	GError    *error;
+	char     **argv;
+	char     **envp;
+	GIOChannel *channel;
+
+	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
+	g_return_val_if_fail (command != NULL, FALSE);
+	g_return_val_if_fail (child_pid != NULL, FALSE);
+
+	error = NULL;
+
+	if (! g_shell_parse_argv (command, NULL, &argv, &error))
+	{
+		gs_debug ("Could not parse command: %s", error->message);
+		g_error_free (error);
+		return FALSE;
+	}
+
+	envp = g_get_environ ();
+
+	result = g_spawn_async_with_pipes (NULL,
+	                                   argv,
+	                                   envp,
+	                                   G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH,
+	                                   NULL,
+	                                   NULL,
+	                                   child_pid,
+	                                   NULL,
+	                                   NULL,
+	                                   NULL,
+	                                   &error);
+
+	g_strfreev (argv);
+	g_strfreev (envp);
+
+	if (! result)
+	{
+		gs_debug ("Could not start command: %s", error->message);
+		g_error_free (error);
+		return FALSE;
+	}
+
+	channel = g_io_channel_unix_new (*child_pid);
+	g_io_channel_set_close_on_unref (channel, TRUE);
+	g_io_channel_set_flags (channel, G_IO_FLAG_NONBLOCK, NULL);
+	*watch_id = g_io_add_watch (channel,
+	                            G_IO_IN | G_IO_HUP | G_IO_ERR,
+	                            watch_func,
+	                            watch_data);
+	g_io_channel_unref (channel);
+
+	return TRUE;
+}
+
+static void
+popup_dialog (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+	WleEmbeddedCompositor  *compositor;
+	gboolean                result;
+	GString                *command;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	gs_debug ("Popping up dialog");
+
+	compositor = gs_manager_get_compositor (NULL);
+	if (compositor == NULL)
+	{
+		gs_debug ("No embedded compositor available");
+		return;
+	}
+
+	command = g_string_new (MATE_SCREENSAVER_DIALOG_PATH);
+
+	if (window->priv->logout_enabled)
+	{
+		command = g_string_append (command, " --enable-logout");
+		g_string_append_printf (command, " --logout-command='%s'", window->priv->logout_command);
+	}
+
+	if (window->priv->status_message)
+	{
+		char *quoted;
+
+		quoted = g_shell_quote (window->priv->status_message);
+		g_string_append_printf (command, " --status-message=%s", quoted);
+		g_free (quoted);
+	}
+
+	if (window->priv->user_switch_enabled)
+	{
+		command = g_string_append (command, " --enable-switch");
+	}
+
+	if (gs_debug_enabled ())
+	{
+		command = g_string_append (command, " --verbose");
+	}
+
+	gtk_widget_hide (priv->drawing_area);
+
+	gtk_widget_queue_draw (GTK_WIDGET (window));
+	set_invisible_cursor (gtk_widget_get_window (GTK_WIDGET (window)), FALSE);
+
+	priv->dialog_quit_requested = FALSE;
+	priv->dialog_response = DIALOG_RESPONSE_CANCEL;
+
+	result = spawn_on_window (window,
+	                          command->str,
+	                          &priv->lock_pid,
+	                          (GIOFunc) lock_command_watch,
+	                          window,
+	                          &priv->lock_watch_id);
+	if (! result)
+	{
+		gs_debug ("Could not start command: %s", command->str);
+	}
+
+	g_string_free (command, TRUE);
+}
+
+static gboolean
+popup_dialog_idle (gpointer data)
+{
+	GSWindow *window = data;
+
+	popup_dialog (window);
+
+	return FALSE;
 }
 
 static void
@@ -268,6 +605,8 @@ session_lock_handle_locked (void                        *data,
 	create_lock_surface (window);
 
 	wayland_window_set_dialog_up (window, TRUE);
+
+	g_idle_add (popup_dialog_idle, window);
 }
 
 static void
@@ -451,6 +790,8 @@ gs_window_real_hide (GtkWidget *widget)
 
 	remove_watchdog_timer (window);
 
+	popdown_dialog (window);
+
 	destroy_session_lock (window);
 
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->hide)
@@ -522,6 +863,7 @@ gs_window_real_realize (GtkWidget *widget)
 	GSWindow                *window = GS_WINDOW (widget);
 	GSWindowWaylandPrivate  *priv;
 	struct wl_display       *wl_display;
+	GdkMonitor              *monitor;
 
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->realize)
 	{
@@ -532,6 +874,33 @@ gs_window_real_realize (GtkWidget *widget)
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
+	/* Initialize gtk-layer-shell for proper Wayland layering */
+	if (gtk_layer_is_supported ())
+	{
+		gtk_layer_init_for_window (GTK_WINDOW (window));
+		gtk_layer_set_layer (GTK_WINDOW (window), GTK_LAYER_SHELL_LAYER_OVERLAY);
+		gtk_layer_set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
+		gtk_layer_set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
+		gtk_layer_set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_TOP, TRUE);
+		gtk_layer_set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
+		gtk_layer_set_keyboard_mode (GTK_WINDOW (window),
+		                             GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
+		gtk_layer_set_namespace (GTK_WINDOW (window), "lock-screen");
+
+		monitor = gs_window_get_monitor (window);
+		if (monitor != NULL)
+		{
+			gtk_layer_set_monitor (GTK_WINDOW (window), monitor);
+		}
+
+		gs_debug ("Initialized gtk-layer-shell for lock screen window");
+	}
+	else
+	{
+		gs_debug ("gtk-layer-shell not supported, using fallback");
+	}
+
+	/* Bind session lock manager from registry */
 	if (priv->registry == NULL)
 	{
 		GdkDisplay *display;
@@ -668,6 +1037,11 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 	priv->lock_surface = NULL;
 	priv->is_locked = FALSE;
 	priv->locked_confirmed = FALSE;
+	priv->socket = NULL;
+	priv->lock_pid = 0;
+	priv->lock_watch_id = 0;
+	priv->dialog_response = DIALOG_RESPONSE_CANCEL;
+	priv->dialog_quit_requested = FALSE;
 	priv->idle_notification = NULL;
 	priv->idle_timeout_id = 0;
 	priv->watchdog_timer_id = 0;
@@ -732,6 +1106,8 @@ gs_window_wayland_finalize (GObject *object)
 		g_timer_destroy (priv->timer);
 		priv->timer = NULL;
 	}
+
+	popdown_dialog (window);
 
 	destroy_session_lock (window);
 

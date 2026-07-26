@@ -28,6 +28,10 @@
 #ifdef ENABLE_X11
 #include <gdk/gdkx.h>
 #endif
+#ifdef ENABLE_WAYLAND
+#include <gdk/gdkwayland.h>
+#include <libwlembed-gtk3/libwlembed-gtk3.h>
+#endif
 
 #include <gio/gio.h>
 
@@ -53,6 +57,10 @@ struct GSManagerPrivate
 
 	GSThemeManager *theme_manager;
 	MateBG        *bg;
+
+#ifdef ENABLE_WAYLAND
+	WleEmbeddedCompositor *compositor;
+#endif
 
 	/* Policy */
 	glong        lock_timeout;
@@ -118,6 +126,10 @@ enum
 #define FADE_TIMEOUT 250
 
 static guint         signals [LAST_SIGNAL] = { 0, };
+
+#ifdef ENABLE_WAYLAND
+static WleEmbeddedCompositor *global_compositor = NULL;
+#endif
 
 G_DEFINE_TYPE_WITH_PRIVATE (GSManager, gs_manager, G_TYPE_OBJECT)
 
@@ -1036,11 +1048,32 @@ on_bg_changed (MateBG   *bg,
 static void
 gs_manager_init (GSManager *manager)
 {
+	GError *error = NULL;
+
 	manager->priv = gs_manager_get_instance_private (manager);
 
 	manager->priv->fade = gs_fade_new ();
 	manager->priv->grab = gs_grab_new ();
 	manager->priv->theme_manager = gs_theme_manager_new ();
+
+#ifdef ENABLE_WAYLAND
+	if (global_compositor == NULL)
+	{
+		global_compositor = wle_gtk_create_embedded_compositor ("mate-screensaver", &error);
+		if (global_compositor == NULL)
+		{
+			g_warning ("Failed to create embedded compositor: %s", error->message);
+			g_error_free (error);
+		}
+		else
+		{
+			wle_embedded_compositor_set_manage_child_processes (global_compositor, TRUE);
+			gs_debug ("Created embedded compositor: %s",
+			          wle_embedded_compositor_get_socket_name (global_compositor));
+		}
+	}
+	manager->priv->compositor = global_compositor;
+#endif
 
 	manager->priv->bg = mate_bg_new ();
 
@@ -1711,6 +1744,10 @@ gs_manager_finalize (GObject *object)
 	g_object_unref (manager->priv->grab);
 	g_object_unref (manager->priv->theme_manager);
 
+#ifdef ENABLE_WAYLAND
+	manager->priv->compositor = NULL;
+#endif
+
 	G_OBJECT_CLASS (gs_manager_parent_class)->finalize (object);
 }
 
@@ -1921,6 +1958,14 @@ gs_manager_get_active (GSManager *manager)
 
 	return manager->priv->active;
 }
+
+#ifdef ENABLE_WAYLAND
+WleEmbeddedCompositor *
+gs_manager_get_compositor (GSManager *manager)
+{
+	return global_compositor;
+}
+#endif
 
 gboolean
 gs_manager_request_unlock (GSManager *manager)

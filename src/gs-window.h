@@ -54,6 +54,9 @@ typedef struct
 	void            (* dialog_up)           (GSWindow *window);
 	void            (* dialog_down)         (GSWindow *window);
 
+	void            (* request_unlock)      (GSWindow *window);
+	void            (* cancel_unlock_request) (GSWindow *window);
+
 	void            (* real_show)           (GSWindow *window);
 	void            (* real_destroy)        (GSWindow *window);
 } GSWindowClass;

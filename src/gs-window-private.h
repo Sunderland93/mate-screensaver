@@ -38,10 +38,11 @@ struct GSWindowPrivate
 	glong          logout_timeout;
 	char          *status_message;
 
-#ifdef ENABLE_X11
-	GdkRectangle geometry;
 	guint      obscured : 1;
 	guint      dialog_up : 1;
+
+#ifdef ENABLE_X11
+	GdkRectangle geometry;
 
 	GtkWidget *vbox;
 	GtkWidget *drawing_area;

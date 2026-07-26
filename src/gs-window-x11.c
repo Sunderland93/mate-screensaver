@@ -1854,6 +1854,43 @@ gs_window_real_visibility_notify_event (GtkWidget          *widget,
 }
 
 static void
+gs_window_x11_request_unlock (GSWindow *window)
+{
+	g_return_if_fail (GS_IS_WINDOW (window));
+
+	if (! gtk_widget_get_mapped (GTK_WIDGET (window)))
+	{
+		return;
+	}
+
+	if (window->priv->lock_watch_id != 0)
+	{
+		return;
+	}
+
+	if (! window->priv->lock_enabled)
+	{
+		add_emit_deactivated_idle (window);
+		return;
+	}
+
+	if (window->priv->popup_dialog_idle_id == 0)
+	{
+		add_popup_dialog_idle (window);
+	}
+
+	window_set_dialog_up (window, TRUE);
+}
+
+static void
+gs_window_x11_cancel_unlock_request (GSWindow *window)
+{
+	g_return_if_fail (GS_IS_WINDOW (window));
+
+	popdown_dialog (window);
+}
+
+static void
 gs_window_x11_class_init (GSWindowX11Class *klass)
 {
 	GObjectClass   *object_class = G_OBJECT_CLASS (klass);
@@ -1864,6 +1901,8 @@ gs_window_x11_class_init (GSWindowX11Class *klass)
 
 	window_class->real_show = gs_window_real_show;
 	window_class->real_destroy = NULL;
+	window_class->request_unlock = gs_window_x11_request_unlock;
+	window_class->cancel_unlock_request = gs_window_x11_cancel_unlock_request;
 
 	widget_class->hide                = gs_window_real_hide;
 	widget_class->draw                = gs_window_real_draw;

@@ -272,6 +272,7 @@ if ENABLE_WAYLAND
 WAYLAND_SOURCES =		\
 	gs-watcher-wayland.c	\
 	gs-window-wayland.c	\
+	gs-window-wayland.h	\
 	gs-grab-wayland.c	\
 	$(NULL)
 

@@ -41,6 +41,10 @@ typedef struct GSWindowWaylandPrivate GSWindowWaylandPrivate;
 
 struct GSWindowWaylandPrivate
 {
+	struct wl_registry                  *registry;
+	struct ext_session_lock_manager_v1 *session_lock_manager;
+	struct wl_output                    *wl_output;
+
 	struct wl_surface                  *wl_surface;
 	struct ext_session_lock_v1         *session_lock;
 	struct ext_session_lock_surface_v1 *lock_surface;
@@ -99,6 +103,58 @@ set_invisible_cursor (GdkWindow *window,
 	}
 }
 
+static void
+wayland_window_set_dialog_up (GSWindow *window,
+                              gboolean  dialog_up)
+{
+	if (window->priv->dialog_up == dialog_up)
+	{
+		return;
+	}
+
+	window->priv->dialog_up = (dialog_up != FALSE);
+	g_object_notify (G_OBJECT (window), "dialog-up");
+}
+
+static gboolean
+emit_deactivated_idle (gpointer data)
+{
+	GSWindow *window = GS_WINDOW (data);
+
+	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_DEACTIVATED], 0);
+
+	return FALSE;
+}
+
+static void
+add_emit_deactivated_idle (GSWindow *window)
+{
+	g_idle_add (emit_deactivated_idle, window);
+}
+
+static void
+destroy_session_lock (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->lock_surface != NULL)
+	{
+		ext_session_lock_surface_v1_destroy (priv->lock_surface);
+		priv->lock_surface = NULL;
+	}
+
+	if (priv->session_lock != NULL)
+	{
+		ext_session_lock_v1_destroy (priv->session_lock);
+		priv->session_lock = NULL;
+	}
+
+	priv->is_locked = FALSE;
+	priv->locked_confirmed = FALSE;
+}
+
 static gboolean
 watchdog_timer_cb (gpointer data)
 {
@@ -143,38 +199,89 @@ add_watchdog_timer (GSWindow *window,
 }
 
 static void
+create_lock_surface (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+	GdkWindow              *gdk_window;
+	GdkMonitor             *monitor;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->session_lock == NULL)
+	{
+		gs_debug ("No session lock available");
+		return;
+	}
+
+	if (priv->lock_surface != NULL)
+	{
+		gs_debug ("Lock surface already exists");
+		return;
+	}
+
+	gdk_window = gtk_widget_get_window (GTK_WIDGET (window));
+	if (gdk_window == NULL)
+	{
+		gs_debug ("No GDK window available");
+		return;
+	}
+
+	priv->wl_surface = gdk_wayland_window_get_wl_surface (gdk_window);
+	if (priv->wl_surface == NULL)
+	{
+		gs_debug ("Failed to get Wayland surface");
+		return;
+	}
+
+	monitor = gs_window_get_monitor (window);
+	if (monitor != NULL)
+	{
+		priv->wl_output = gdk_wayland_monitor_get_wl_output (monitor);
+	}
+
+	priv->lock_surface = ext_session_lock_v1_get_lock_surface (priv->session_lock,
+	                                                           priv->wl_surface,
+	                                                           priv->wl_output);
+	if (priv->lock_surface != NULL)
+	{
+		gs_debug ("Lock surface created for output");
+	}
+	else
+	{
+		gs_debug ("Failed to create lock surface");
+	}
+}
+
+static void
 session_lock_handle_locked (void                        *data,
                             struct ext_session_lock_v1 *session_lock)
 {
-	GSWindow             *window = GS_WINDOW (data);
-	GSWindowWaylandPrivate *priv;
+	GSWindow                *window = GS_WINDOW (data);
+	GSWindowWaylandPrivate  *priv;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	priv->locked_confirmed = TRUE;
 
 	gs_debug ("Session lock confirmed by compositor");
+
+	create_lock_surface (window);
+
+	wayland_window_set_dialog_up (window, TRUE);
 }
 
 static void
 session_lock_handle_finished (void                        *data,
                               struct ext_session_lock_v1 *session_lock)
 {
-	GSWindow             *window = GS_WINDOW (data);
-	GSWindowWaylandPrivate *priv;
+	GSWindow                *window = GS_WINDOW (data);
+	GSWindowWaylandPrivate  *priv;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	gs_debug ("Session lock finished by compositor");
 
-	priv->is_locked = FALSE;
-	priv->locked_confirmed = FALSE;
-
-	if (priv->lock_surface != NULL)
-	{
-		ext_session_lock_surface_v1_destroy (priv->lock_surface);
-		priv->lock_surface = NULL;
-	}
+	destroy_session_lock (window);
 }
 
 static const struct ext_session_lock_v1_listener session_lock_listener =
@@ -205,17 +312,42 @@ static const struct ext_session_lock_surface_v1_listener lock_surface_listener =
 };
 
 static void
-wayland_window_set_session_lock (GSWindow *window)
+gs_window_wayland_request_unlock (GSWindow *window)
 {
 	GSWindowWaylandPrivate *priv;
 	GdkWindow              *gdk_window;
 
+	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
+
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (! gtk_widget_get_mapped (GTK_WIDGET (window)))
+	{
+		return;
+	}
+
+	if (priv->session_lock_manager == NULL)
+	{
+		gs_debug ("No session lock manager available");
+		return;
+	}
+
+	if (! window->priv->lock_enabled)
+	{
+		add_emit_deactivated_idle (window);
+		return;
+	}
+
+	if (priv->session_lock != NULL)
+	{
+		gs_debug ("Session lock already active");
+		return;
+	}
 
 	gdk_window = gtk_widget_get_window (GTK_WIDGET (window));
 	if (gdk_window == NULL)
 	{
-		gs_debug ("No GDK window available for session lock");
+		gs_debug ("No GDK window available");
 		return;
 	}
 
@@ -226,21 +358,49 @@ wayland_window_set_session_lock (GSWindow *window)
 		return;
 	}
 
-	if (priv->session_lock != NULL)
-	{
-		gs_debug ("Session lock already created");
-		return;
-	}
-
 	priv->is_locked = TRUE;
 	priv->locked_confirmed = FALSE;
 
-	/* The session lock is expected to have been obtained from the
-	 * compositor registry by the manager. For now we mark the
-	 * pending state; the actual ext_session_lock_v1 object will be
-	 * set when the manager provides it via
-	 * gs_window_wayland_set_session_lock(). */
-	gs_debug ("Session lock requested");
+	priv->session_lock = ext_session_lock_manager_v1_lock (priv->session_lock_manager);
+	if (priv->session_lock == NULL)
+	{
+		gs_debug ("Failed to request session lock");
+		priv->is_locked = FALSE;
+		return;
+	}
+
+	ext_session_lock_v1_add_listener (priv->session_lock,
+	                                 &session_lock_listener,
+	                                 window);
+
+	gs_debug ("Session lock requested from compositor");
+}
+
+static void
+gs_window_wayland_cancel_unlock_request (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->session_lock != NULL)
+	{
+		ext_session_lock_v1_unlock_and_destroy (priv->session_lock);
+		priv->session_lock = NULL;
+	}
+
+	if (priv->lock_surface != NULL)
+	{
+		ext_session_lock_surface_v1_destroy (priv->lock_surface);
+		priv->lock_surface = NULL;
+	}
+
+	priv->is_locked = FALSE;
+	priv->locked_confirmed = FALSE;
+
+	wayland_window_set_dialog_up (window, FALSE);
 }
 
 static gboolean
@@ -279,33 +439,19 @@ gs_window_real_show (GSWindow *window)
 
 	remove_watchdog_timer (window);
 	add_watchdog_timer (window, 30000);
-
-	wayland_window_set_session_lock (window);
 }
 
 static void
 gs_window_real_hide (GtkWidget *widget)
 {
-	GSWindow             *window = GS_WINDOW (widget);
-	GSWindowWaylandPrivate *priv;
+	GSWindow                *window = GS_WINDOW (widget);
+	GSWindowWaylandPrivate  *priv;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	remove_watchdog_timer (window);
 
-	if (priv->lock_surface != NULL)
-	{
-		ext_session_lock_surface_v1_destroy (priv->lock_surface);
-		priv->lock_surface = NULL;
-	}
-
-	if (priv->session_lock != NULL)
-	{
-		ext_session_lock_v1_destroy (priv->session_lock);
-		priv->session_lock = NULL;
-		priv->is_locked = FALSE;
-		priv->locked_confirmed = FALSE;
-	}
+	destroy_session_lock (window);
 
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->hide)
 	{
@@ -325,14 +471,82 @@ gs_window_real_draw (GtkWidget *widget,
 }
 
 static void
+wayland_registry_handle_global (void               *data,
+                                struct wl_registry *registry,
+                                uint32_t            name,
+                                const char         *interface,
+                                uint32_t            version)
+{
+	GSWindow                *window = GS_WINDOW (data);
+	GSWindowWaylandPrivate  *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (strcmp (interface, ext_session_lock_manager_v1_interface.name) == 0)
+	{
+		priv->session_lock_manager = wl_registry_bind (registry,
+		                                               name,
+		                                               &ext_session_lock_manager_v1_interface,
+		                                               1);
+		gs_debug ("Bound session lock manager (global %u)", name);
+	}
+}
+
+static void
+wayland_registry_handle_global_remove (void               *data,
+                                       struct wl_registry *registry,
+                                       uint32_t            name)
+{
+	GSWindow                *window = GS_WINDOW (data);
+	GSWindowWaylandPrivate  *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->session_lock_manager != NULL)
+	{
+		gs_debug ("Session lock manager global %u removed", name);
+		ext_session_lock_manager_v1_destroy (priv->session_lock_manager);
+		priv->session_lock_manager = NULL;
+	}
+}
+
+static const struct wl_registry_listener registry_listener =
+{
+	wayland_registry_handle_global,
+	wayland_registry_handle_global_remove,
+};
+
+static void
 gs_window_real_realize (GtkWidget *widget)
 {
+	GSWindow                *window = GS_WINDOW (widget);
+	GSWindowWaylandPrivate  *priv;
+	struct wl_display       *wl_display;
+
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->realize)
 	{
 		GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->realize (widget);
 	}
 
 	gtk_widget_set_app_paintable (widget, TRUE);
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->registry == NULL)
+	{
+		GdkDisplay *display;
+
+		display = gtk_widget_get_display (widget);
+		wl_display = gdk_wayland_display_get_wl_display (display);
+		if (wl_display != NULL)
+		{
+			priv->registry = wl_display_get_registry (wl_display);
+			wl_registry_add_listener (priv->registry,
+			                          &registry_listener,
+			                          window);
+			wl_display_roundtrip (wl_display);
+		}
+	}
 
 	gs_debug ("Wayland window realized");
 }
@@ -346,10 +560,18 @@ gs_window_real_unrealize (GtkWidget *widget)
 
 	remove_watchdog_timer (GS_WINDOW (widget));
 
-	if (priv->lock_surface != NULL)
+	destroy_session_lock (GS_WINDOW (widget));
+
+	if (priv->session_lock_manager != NULL)
 	{
-		ext_session_lock_surface_v1_destroy (priv->lock_surface);
-		priv->lock_surface = NULL;
+		ext_session_lock_manager_v1_destroy (priv->session_lock_manager);
+		priv->session_lock_manager = NULL;
+	}
+
+	if (priv->registry != NULL)
+	{
+		wl_registry_destroy (priv->registry);
+		priv->registry = NULL;
 	}
 
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->unrealize)
@@ -418,6 +640,8 @@ gs_window_wayland_class_init (GSWindowWaylandClass *klass)
 
 	window_class->real_show = gs_window_real_show;
 	window_class->real_destroy = NULL;
+	window_class->request_unlock = gs_window_wayland_request_unlock;
+	window_class->cancel_unlock_request = gs_window_wayland_cancel_unlock_request;
 
 	widget_class->hide                = gs_window_real_hide;
 	widget_class->draw                = gs_window_real_draw;
@@ -436,6 +660,9 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (wayland);
 
+	priv->registry = NULL;
+	priv->session_lock_manager = NULL;
+	priv->wl_output = NULL;
 	priv->wl_surface = NULL;
 	priv->session_lock = NULL;
 	priv->lock_surface = NULL;
@@ -486,8 +713,8 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 static void
 gs_window_wayland_finalize (GObject *object)
 {
-	GSWindow             *window;
-	GSWindowWaylandPrivate *priv;
+	GSWindow                *window;
+	GSWindowWaylandPrivate  *priv;
 
 	g_return_if_fail (object != NULL);
 	g_return_if_fail (GS_IS_WINDOW (object));
@@ -506,139 +733,24 @@ gs_window_wayland_finalize (GObject *object)
 		priv->timer = NULL;
 	}
 
-	if (priv->lock_surface != NULL)
+	destroy_session_lock (window);
+
+	if (priv->session_lock_manager != NULL)
 	{
-		ext_session_lock_surface_v1_destroy (priv->lock_surface);
-		priv->lock_surface = NULL;
+		ext_session_lock_manager_v1_destroy (priv->session_lock_manager);
+		priv->session_lock_manager = NULL;
 	}
 
-	if (priv->session_lock != NULL)
+	if (priv->registry != NULL)
 	{
-		ext_session_lock_v1_destroy (priv->session_lock);
-		priv->session_lock = NULL;
+		wl_registry_destroy (priv->registry);
+		priv->registry = NULL;
 	}
-
-	priv->is_locked = FALSE;
-	priv->locked_confirmed = FALSE;
 
 	/* Note: common fields (logout_command, keyboard_command, status_message)
 	 * are freed by the base class finalize */
 
 	G_OBJECT_CLASS (gs_window_wayland_parent_class)->finalize (object);
-}
-
-void
-gs_window_wayland_set_session_lock (GSWindow                   *window,
-                                    struct ext_session_lock_v1 *session_lock)
-{
-	GSWindowWaylandPrivate *priv;
-
-	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	if (priv->session_lock != NULL)
-	{
-		ext_session_lock_v1_destroy (priv->session_lock);
-	}
-
-	priv->session_lock = session_lock;
-
-	if (priv->session_lock != NULL)
-	{
-		ext_session_lock_v1_add_listener (priv->session_lock,
-		                                 &session_lock_listener,
-		                                 window);
-	}
-}
-
-struct ext_session_lock_v1 *
-gs_window_wayland_get_session_lock (GSWindow *window)
-{
-	GSWindowWaylandPrivate *priv;
-
-	g_return_val_if_fail (GS_IS_WINDOW_WAYLAND (window), NULL);
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	return priv->session_lock;
-}
-
-gboolean
-gs_window_wayland_is_locked (GSWindow *window)
-{
-	GSWindowWaylandPrivate *priv;
-
-	g_return_val_if_fail (GS_IS_WINDOW_WAYLAND (window), FALSE);
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	return priv->is_locked;
-}
-
-gboolean
-gs_window_wayland_is_lock_confirmed (GSWindow *window)
-{
-	GSWindowWaylandPrivate *priv;
-
-	g_return_val_if_fail (GS_IS_WINDOW_WAYLAND (window), FALSE);
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	return priv->locked_confirmed;
-}
-
-void
-gs_window_wayland_create_lock_surface (GSWindow *window)
-{
-	GSWindowWaylandPrivate *priv;
-	GdkWindow              *gdk_window;
-
-	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	if (priv->session_lock == NULL)
-	{
-		gs_debug ("No session lock available");
-		return;
-	}
-
-	if (priv->lock_surface != NULL)
-	{
-		gs_debug ("Lock surface already exists");
-		return;
-	}
-
-	gdk_window = gtk_widget_get_window (GTK_WIDGET (window));
-	if (gdk_window == NULL)
-	{
-		gs_debug ("No GDK window available");
-		return;
-	}
-
-	priv->wl_surface = gdk_wayland_window_get_wl_surface (gdk_window);
-	if (priv->wl_surface == NULL)
-	{
-		gs_debug ("Failed to get Wayland surface");
-		return;
-	}
-
-	priv->lock_surface = ext_session_lock_v1_get_lock_surface (priv->session_lock,
-	                                                           priv->wl_surface,
-	                                                           /* output */
-	                                                           NULL);
-	if (priv->lock_surface != NULL)
-	{
-		ext_session_lock_surface_v1_add_listener (priv->lock_surface,
-		                                         &lock_surface_listener,
-		                                         window);
-		gs_debug ("Lock surface created");
-	}
-	else
-	{
-		gs_debug ("Failed to create lock surface");
-	}
 }
 
 GSWindow *

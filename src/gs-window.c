@@ -89,6 +89,16 @@ gs_window_real_dialog_down (GSWindow *window)
 }
 
 static void
+gs_window_real_request_unlock (GSWindow *window)
+{
+}
+
+static void
+gs_window_real_cancel_unlock_request (GSWindow *window)
+{
+}
+
+static void
 gs_window_real_show (GSWindow *window)
 {
 	GtkWidget *widget;
@@ -150,7 +160,6 @@ gs_window_set_property (GObject      *object,
 		gs_window_set_status_message (self, g_value_get_string (value));
 		break;
 	case PROP_OBSCURED:
-#ifdef ENABLE_X11
 		{
 			gboolean v = g_value_get_boolean (value);
 			if (self->priv->obscured != v)
@@ -159,10 +168,8 @@ gs_window_set_property (GObject      *object,
 				g_object_notify_by_pspec (object, obj_properties[PROP_OBSCURED]);
 			}
 		}
-#endif
 		break;
 	case PROP_DIALOG_UP:
-#ifdef ENABLE_X11
 		{
 			gboolean v = g_value_get_boolean (value);
 			if (self->priv->dialog_up != v)
@@ -171,7 +178,6 @@ gs_window_set_property (GObject      *object,
 				g_object_notify_by_pspec (object, obj_properties[PROP_DIALOG_UP]);
 			}
 		}
-#endif
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -221,18 +227,10 @@ gs_window_get_property (GObject    *object,
 		g_value_set_string (value, self->priv->status_message);
 		break;
 	case PROP_OBSCURED:
-#ifdef ENABLE_X11
 		g_value_set_boolean (value, self->priv->obscured);
-#else
-		g_value_set_boolean (value, FALSE);
-#endif
 		break;
 	case PROP_DIALOG_UP:
-#ifdef ENABLE_X11
 		g_value_set_boolean (value, self->priv->dialog_up);
-#else
-		g_value_set_boolean (value, FALSE);
-#endif
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -283,6 +281,8 @@ gs_window_class_init (GSWindowClass *klass)
 	klass->deactivated = gs_window_real_deactivated;
 	klass->dialog_up   = gs_window_real_dialog_up;
 	klass->dialog_down = gs_window_real_dialog_down;
+	klass->request_unlock = gs_window_real_request_unlock;
+	klass->cancel_unlock_request = gs_window_real_cancel_unlock_request;
 	klass->real_show   = gs_window_real_show;
 	klass->real_destroy = gs_window_real_destroy;
 
@@ -435,9 +435,10 @@ gs_window_init (GSWindow *window)
 	window->priv->logout_timeout = 0;
 	window->priv->status_message = NULL;
 
-#ifdef ENABLE_X11
 	window->priv->obscured = FALSE;
 	window->priv->dialog_up = FALSE;
+
+#ifdef ENABLE_X11
 	window->priv->vbox = NULL;
 	window->priv->drawing_area = NULL;
 	window->priv->lock_box = NULL;
@@ -636,11 +637,7 @@ gs_window_is_obscured (GSWindow *window)
 {
 	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
 
-#ifdef ENABLE_X11
 	return window->priv->obscured;
-#else
-	return FALSE;
-#endif
 }
 
 gboolean
@@ -648,11 +645,7 @@ gs_window_is_dialog_up (GSWindow *window)
 {
 	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
 
-#ifdef ENABLE_X11
 	return window->priv->dialog_up;
-#else
-	return FALSE;
-#endif
 }
 
 GdkDisplay *
@@ -774,12 +767,22 @@ void
 gs_window_request_unlock (GSWindow *window)
 {
 	g_return_if_fail (GS_IS_WINDOW (window));
+
+	if (GS_WINDOW_GET_CLASS (window)->request_unlock)
+	{
+		GS_WINDOW_GET_CLASS (window)->request_unlock (window);
+	}
 }
 
 void
 gs_window_cancel_unlock_request (GSWindow *window)
 {
 	g_return_if_fail (GS_IS_WINDOW (window));
+
+	if (GS_WINDOW_GET_CLASS (window)->cancel_unlock_request)
+	{
+		GS_WINDOW_GET_CLASS (window)->cancel_unlock_request (window);
+	}
 }
 
 GSWindow *

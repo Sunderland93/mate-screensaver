@@ -404,6 +404,12 @@ popup_dialog (GSWindow *window)
 
 	gs_debug ("Popping up dialog");
 
+	if (! gtk_window_is_active (GTK_WINDOW (window)))
+	{
+		gs_debug ("Window is not active, deferring dialog");
+		return;
+	}
+
 	compositor = gs_wayland_compositor;
 	if (compositor == NULL)
 	{
@@ -627,6 +633,7 @@ gs_window_wayland_create_lock_surface (GSWindow *window)
 		ext_session_lock_surface_v1_add_listener (priv->lock_surface,
 		                                          &lock_surface_listener,
 		                                          window);
+		wl_display_roundtrip (gdk_wayland_display_get_wl_display (gdk_display_get_default ()));
 		gs_debug ("Lock surface created for output");
 	}
 	else

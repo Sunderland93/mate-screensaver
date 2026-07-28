@@ -242,6 +242,8 @@ manager_request_session_lock (GSManager *manager)
 	                                 &session_lock_listener,
 	                                 manager);
 
+	wl_display_roundtrip (gdk_wayland_display_get_wl_display (gdk_display_get_default ()));
+
 	gs_debug ("Session lock requested from compositor");
 	return TRUE;
 }
@@ -254,6 +256,7 @@ manager_unlock_session (GSManager *manager)
 		if (manager->priv->session_lock_active)
 		{
 			ext_session_lock_v1_unlock_and_destroy (manager->priv->session_lock);
+			wl_display_roundtrip (gdk_wayland_display_get_wl_display (gdk_display_get_default ()));
 		}
 		else
 		{

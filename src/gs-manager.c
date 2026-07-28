@@ -1798,6 +1798,19 @@ on_display_monitor_added (GdkDisplay *display,
 	/* add a new window */
 	gs_manager_create_window_for_monitor (manager, monitor);
 
+#ifdef ENABLE_WAYLAND
+	/* If session lock is already active, create a lock surface for the new window */
+	if (manager->priv->session_lock_active)
+	{
+		GSList *last;
+		last = g_slist_last (manager->priv->windows);
+		if (last != NULL)
+		{
+			gs_window_create_lock_surface (GS_WINDOW (last->data));
+		}
+	}
+#endif
+
 	/* and put unlock dialog up whereever it's supposed to be */
 	gs_manager_request_unlock (manager);
 }

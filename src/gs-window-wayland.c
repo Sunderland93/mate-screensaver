@@ -59,6 +59,7 @@ struct GSWindowWaylandPrivate
 	gboolean                            dialog_quit_requested;
 
 	guint                               watchdog_timer_id;
+	guint                               popup_dialog_idle_id;
 	GTimer                             *timer;
 
 	GtkWidget                          *vbox;
@@ -313,7 +314,17 @@ popdown_dialog (GSWindow *window)
 		priv->socket = NULL;
 	}
 
+	gtk_widget_show (priv->drawing_area);
+
+	set_invisible_cursor (gtk_widget_get_window (GTK_WIDGET (window)), TRUE);
+
 	priv->dialog_quit_requested = FALSE;
+
+	if (priv->popup_dialog_idle_id != 0)
+	{
+		g_source_remove (priv->popup_dialog_idle_id);
+		priv->popup_dialog_idle_id = 0;
+	}
 
 	wayland_window_set_dialog_up (window, FALSE);
 }
@@ -456,7 +467,24 @@ popup_dialog_idle (gpointer data)
 
 	popup_dialog (window);
 
+	GS_WINDOW_WAYLAND_GET_PRIVATE (window)->popup_dialog_idle_id = 0;
+
 	return FALSE;
+}
+
+static void
+add_popup_dialog_idle (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (priv->popup_dialog_idle_id != 0)
+	{
+		return;
+	}
+
+	priv->popup_dialog_idle_id = g_idle_add (popup_dialog_idle, window);
 }
 
 static void
@@ -610,10 +638,33 @@ gs_window_wayland_create_lock_surface (GSWindow *window)
 static void
 gs_window_wayland_request_unlock (GSWindow *window)
 {
+	GSWindowWaylandPrivate *priv;
+
 	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
 
-	/* On Wayland, session lock is managed by GSManager.
-	 * This is a no-op; the manager handles lock lifecycle. */
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	if (! gtk_widget_get_mapped (GTK_WIDGET (window)))
+	{
+		return;
+	}
+
+	if (priv->lock_watch_id != 0)
+	{
+		return;
+	}
+
+	if (! window->priv->lock_enabled)
+	{
+		add_emit_deactivated_idle (window);
+		return;
+	}
+
+	gs_debug ("Wayland request unlock");
+
+	add_popup_dialog_idle (window);
+
+	wayland_window_set_dialog_up (window, TRUE);
 }
 
 static void
@@ -817,6 +868,7 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 	priv->dialog_response = DIALOG_RESPONSE_CANCEL;
 	priv->dialog_quit_requested = FALSE;
 	priv->watchdog_timer_id = 0;
+	priv->popup_dialog_idle_id = 0;
 	priv->timer = NULL;
 	priv->vbox = NULL;
 	priv->drawing_area = NULL;

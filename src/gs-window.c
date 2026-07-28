@@ -119,6 +119,11 @@ gs_window_real_destroy (GSWindow *window)
 }
 
 static void
+gs_window_real_create_lock_surface (GSWindow *window)
+{
+}
+
+static void
 gs_window_set_property (GObject      *object,
                         guint         prop_id,
                         const GValue *value,
@@ -285,6 +290,7 @@ gs_window_class_init (GSWindowClass *klass)
 	klass->cancel_unlock_request = gs_window_real_cancel_unlock_request;
 	klass->real_show   = gs_window_real_show;
 	klass->real_destroy = gs_window_real_destroy;
+	klass->create_lock_surface = gs_window_real_create_lock_surface;
 
 	/* signals */
 
@@ -782,6 +788,17 @@ gs_window_cancel_unlock_request (GSWindow *window)
 	if (GS_WINDOW_GET_CLASS (window)->cancel_unlock_request)
 	{
 		GS_WINDOW_GET_CLASS (window)->cancel_unlock_request (window);
+	}
+}
+
+void
+gs_window_create_lock_surface (GSWindow *window)
+{
+	g_return_if_fail (GS_IS_WINDOW (window));
+
+	if (GS_WINDOW_GET_CLASS (window)->create_lock_surface)
+	{
+		GS_WINDOW_GET_CLASS (window)->create_lock_surface (window);
 	}
 }
 

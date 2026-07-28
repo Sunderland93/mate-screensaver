@@ -87,6 +87,7 @@ gs_theme_window_finalize (GObject *object)
 static void
 gs_theme_window_real_realize (GtkWidget *widget)
 {
+#ifdef ENABLE_X11
 	GdkWindow     *window;
 	Window         remote_xwindow;
 	GtkRequisition requisition;
@@ -102,7 +103,6 @@ gs_theme_window_real_realize (GtkWidget *widget)
 	window = NULL;
 	preview_xid = g_getenv ("XSCREENSAVER_WINDOW");
 
-#ifdef ENABLE_X11
 	if (preview_xid != NULL)
 	{
 		char *end;
@@ -134,7 +134,6 @@ gs_theme_window_real_realize (GtkWidget *widget)
 			}
 		}
 	}
-#endif
 
 	if (window == NULL)
 	{
@@ -172,6 +171,14 @@ gs_theme_window_real_realize (GtkWidget *widget)
 	allocation.height = height;
 	gtk_widget_size_allocate (widget, &allocation);
 	gtk_window_resize (GTK_WINDOW (widget), width, height);
+#else
+	GtkWidgetClass *parent_class;
+
+	parent_class = GTK_WIDGET_CLASS (gs_theme_window_parent_class);
+
+	if (parent_class->realize != NULL)
+		parent_class->realize (widget);
+#endif
 }
 
 GtkWidget *

@@ -246,7 +246,7 @@ gs_watcher_set_active (GSWatcher *watcher,
     if (active)
     {
         if (GS_WATCHER_GET_CLASS (watcher)->activate_monitoring)
-            GS_WATCHER_GET_CLASS (watcher)->activate_monitoring (watcher, 0);
+            GS_WATCHER_GET_CLASS (watcher)->activate_monitoring (watcher, priv->idle_timeout_ms);
     }
     else
     {
@@ -265,6 +265,15 @@ gs_watcher_get_active (GSWatcher *watcher)
     g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
 
     return watcher->priv->active;
+}
+
+void
+gs_watcher_set_idle_timeout (GSWatcher *watcher,
+                             guint      timeout_ms)
+{
+    g_return_if_fail (GS_IS_WATCHER (watcher));
+
+    watcher->priv->idle_timeout_ms = timeout_ms;
 }
 
 GSWatcher *

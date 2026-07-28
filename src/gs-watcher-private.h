@@ -36,6 +36,7 @@ struct GSWatcherPrivate
     gboolean idle_notice;
     gboolean idle;
     char *status_message;
+    guint idle_timeout_ms;
 };
 
 gboolean _gs_watcher_set_session_idle     (GSWatcher *watcher,

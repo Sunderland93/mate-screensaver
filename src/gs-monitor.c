@@ -324,6 +324,7 @@ static void _gs_monitor_update_from_prefs(GSMonitor* monitor, GSPrefs* prefs)
 	idle_detection_enabled = TRUE;
 
 	gs_watcher_set_enabled(monitor->priv->watcher, idle_detection_enabled);
+	gs_watcher_set_idle_timeout(monitor->priv->watcher, monitor->priv->prefs->timeout);
 
 	/* in the case where idle detection is reenabled we may need to
 	   activate the watcher too */

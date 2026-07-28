@@ -30,7 +30,9 @@
 #endif
 #ifdef ENABLE_WAYLAND
 #include <gdk/gdkwayland.h>
+#include <wayland-client.h>
 #include <libwlembed-gtk3/libwlembed-gtk3.h>
+#include "ext-session-lock-client.h"
 #endif
 
 #include <gio/gio.h>
@@ -49,6 +51,7 @@
 #include "gs-debug.h"
 
 static void gs_manager_finalize   (GObject        *object);
+static gboolean gs_manager_deactivate (GSManager *manager);
 
 struct GSManagerPrivate
 {
@@ -60,6 +63,10 @@ struct GSManagerPrivate
 
 #ifdef ENABLE_WAYLAND
 	WleEmbeddedCompositor *compositor;
+	struct wl_registry                  *wl_registry;
+	struct ext_session_lock_manager_v1 *session_lock_manager;
+	struct ext_session_lock_v1         *session_lock;
+	gboolean                            session_lock_active;
 #endif
 
 	/* Policy */
@@ -129,9 +136,168 @@ static guint         signals [LAST_SIGNAL] = { 0, };
 
 #ifdef ENABLE_WAYLAND
 static WleEmbeddedCompositor *global_compositor = NULL;
+extern WleEmbeddedCompositor *gs_wayland_compositor;
+extern struct ext_session_lock_v1 *gs_wayland_session_lock;
 #endif
 
 G_DEFINE_TYPE_WITH_PRIVATE (GSManager, gs_manager, G_TYPE_OBJECT)
+
+#ifdef ENABLE_WAYLAND
+static void manager_session_lock_handle_locked   (void                        *data,
+                                                  struct ext_session_lock_v1 *session_lock);
+static void manager_session_lock_handle_finished (void                        *data,
+                                                  struct ext_session_lock_v1 *session_lock);
+
+static const struct ext_session_lock_v1_listener session_lock_listener = {
+	manager_session_lock_handle_locked,
+	manager_session_lock_handle_finished,
+};
+
+static void
+manager_registry_handle_global (void               *data,
+                                struct wl_registry *registry,
+                                uint32_t            name,
+                                const char         *interface,
+                                uint32_t            version)
+{
+	GSManager *manager = GS_MANAGER (data);
+
+	if (strcmp (interface, ext_session_lock_manager_v1_interface.name) == 0)
+	{
+		manager->priv->session_lock_manager = wl_registry_bind (registry,
+		                                                         name,
+		                                                         &ext_session_lock_manager_v1_interface,
+		                                                         1);
+		gs_debug ("Bound session lock manager (global %u)", name);
+	}
+}
+
+static void
+manager_registry_handle_global_remove (void               *data,
+                                       struct wl_registry *registry,
+                                       uint32_t            name)
+{
+}
+
+static const struct wl_registry_listener manager_registry_listener = {
+	manager_registry_handle_global,
+	manager_registry_handle_global_remove,
+};
+
+static void
+manager_session_lock_handle_locked (void                        *data,
+                                    struct ext_session_lock_v1 *session_lock)
+{
+	GSManager *manager = GS_MANAGER (data);
+	GSList    *l;
+
+	manager->priv->session_lock_active = TRUE;
+	gs_debug ("Session lock confirmed by compositor");
+
+	for (l = manager->priv->windows; l; l = l->next)
+	{
+		gs_window_create_lock_surface (GS_WINDOW (l->data));
+	}
+}
+
+static void
+manager_session_lock_handle_finished (void                        *data,
+                                      struct ext_session_lock_v1 *session_lock)
+{
+	GSManager *manager = GS_MANAGER (data);
+
+	gs_debug ("Session lock finished by compositor");
+
+	manager->priv->session_lock = NULL;
+	manager->priv->session_lock_active = FALSE;
+	gs_wayland_session_lock = NULL;
+
+	gs_manager_deactivate (manager);
+}
+
+static gboolean
+manager_request_session_lock (GSManager *manager)
+{
+	if (manager->priv->session_lock != NULL)
+	{
+		return TRUE;
+	}
+
+	if (manager->priv->session_lock_manager == NULL)
+	{
+		gs_debug ("No session lock manager available");
+		return FALSE;
+	}
+
+	manager->priv->session_lock = ext_session_lock_manager_v1_lock (manager->priv->session_lock_manager);
+	if (manager->priv->session_lock == NULL)
+	{
+		gs_debug ("Failed to request session lock");
+		return FALSE;
+	}
+
+	gs_wayland_session_lock = manager->priv->session_lock;
+
+	ext_session_lock_v1_add_listener (manager->priv->session_lock,
+	                                 &session_lock_listener,
+	                                 manager);
+
+	gs_debug ("Session lock requested from compositor");
+	return TRUE;
+}
+
+static void
+manager_unlock_session (GSManager *manager)
+{
+	if (manager->priv->session_lock != NULL)
+	{
+		if (manager->priv->session_lock_active)
+		{
+			ext_session_lock_v1_unlock_and_destroy (manager->priv->session_lock);
+		}
+		else
+		{
+			ext_session_lock_v1_destroy (manager->priv->session_lock);
+		}
+		manager->priv->session_lock = NULL;
+		manager->priv->session_lock_active = FALSE;
+		gs_wayland_session_lock = NULL;
+	}
+}
+
+static void
+manager_bind_session_lock_manager (GSManager *manager)
+{
+	GdkDisplay *display;
+	struct wl_display *wl_display;
+
+	display = gdk_display_get_default ();
+	if (! GDK_IS_WAYLAND_DISPLAY (display))
+	{
+		return;
+	}
+
+	wl_display = gdk_wayland_display_get_wl_display (display);
+	if (wl_display == NULL)
+	{
+		return;
+	}
+
+	manager->priv->wl_registry = wl_display_get_registry (wl_display);
+	wl_registry_add_listener (manager->priv->wl_registry,
+	                          &manager_registry_listener,
+	                          manager);
+	wl_display_roundtrip (wl_display);
+}
+
+struct ext_session_lock_v1 *
+gs_manager_get_session_lock (GSManager *manager)
+{
+	g_return_val_if_fail (GS_IS_MANAGER (manager), NULL);
+
+	return gs_wayland_session_lock;
+}
+#endif
 
 static void
 manager_add_job_for_window (GSManager *manager,
@@ -1073,6 +1239,12 @@ gs_manager_init (GSManager *manager)
 		}
 	}
 	manager->priv->compositor = global_compositor;
+	gs_wayland_compositor = global_compositor;
+	manager->priv->wl_registry = NULL;
+	manager->priv->session_lock_manager = NULL;
+	manager->priv->session_lock = NULL;
+	manager->priv->session_lock_active = FALSE;
+	manager_bind_session_lock_manager (manager);
 #endif
 
 	manager->priv->bg = mate_bg_new ();
@@ -1746,6 +1918,20 @@ gs_manager_finalize (GObject *object)
 
 #ifdef ENABLE_WAYLAND
 	manager->priv->compositor = NULL;
+
+	manager_unlock_session (manager);
+
+	if (manager->priv->session_lock_manager != NULL)
+	{
+		ext_session_lock_manager_v1_destroy (manager->priv->session_lock_manager);
+		manager->priv->session_lock_manager = NULL;
+	}
+
+	if (manager->priv->wl_registry != NULL)
+	{
+		wl_registry_destroy (manager->priv->wl_registry);
+		manager->priv->wl_registry = NULL;
+	}
 #endif
 
 	G_OBJECT_CLASS (gs_manager_parent_class)->finalize (object);
@@ -1858,10 +2044,23 @@ gs_manager_activate (GSManager *manager)
 		return FALSE;
 	}
 
-	res = gs_grab_grab_root (manager->priv->grab, FALSE, FALSE);
-	if (! res)
+#ifdef ENABLE_WAYLAND
+	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
 	{
-		return FALSE;
+		if (! manager_request_session_lock (manager))
+		{
+			gs_debug ("Failed to request session lock on Wayland");
+			return FALSE;
+		}
+	}
+	else
+#endif
+	{
+		res = gs_grab_grab_root (manager->priv->grab, FALSE, FALSE);
+		if (! res)
+		{
+			return FALSE;
+		}
 	}
 
 	if (manager->priv->windows == NULL)
@@ -1921,6 +2120,10 @@ gs_manager_deactivate (GSManager *manager)
 	manager_stop_jobs (manager);
 
 	gs_manager_destroy_windows (manager);
+
+#ifdef ENABLE_WAYLAND
+	manager_unlock_session (manager);
+#endif
 
 	/* reset state */
 	manager->priv->active = FALSE;

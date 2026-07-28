@@ -67,6 +67,9 @@ gboolean    gs_watcher_set_active       (GSWatcher *watcher,
         gboolean   active);
 gboolean    gs_watcher_get_active       (GSWatcher *watcher);
 
+void        gs_watcher_set_idle_timeout (GSWatcher *watcher,
+        guint      timeout_ms);
+
 G_END_DECLS
 
 #endif /* __GS_WATCHER_H */

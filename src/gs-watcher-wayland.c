@@ -37,8 +37,11 @@ typedef struct GSWatcherWaylandPrivate GSWatcherWaylandPrivate;
 struct GSWatcherWaylandPrivate
 {
 	struct ext_idle_notification_v1  *idle_notification;
+	struct ext_idle_notification_v1  *lock_notification;
 	struct ext_idle_notifier_v1      *idle_notifier;
-	guint                            idle_timeout_id;
+	struct wl_registry              *registry;
+	guint                            timeout_ms;
+	guint                            lock_delay_ms;
 };
 
 typedef struct
@@ -59,38 +62,70 @@ G_DEFINE_TYPE_WITH_PRIVATE (GSWatcherWayland, gs_watcher_wayland, GS_TYPE_WATCHE
 
 #define GS_WATCHER_WAYLAND_GET_PRIVATE(o) ((GSWatcherWaylandPrivate *)gs_watcher_wayland_get_instance_private (GS_WATCHER_WAYLAND (o)))
 
-static void remove_idle_notification (GSWatcherWayland *wayland);
+static void remove_idle_notification (GSWatcherWayland *wayland,
+                                      struct ext_idle_notification_v1 **notification);
 
 static void
-on_idled (void                            *data,
-          struct ext_idle_notification_v1 *notification)
+on_activation_idled (void                            *data,
+                     struct ext_idle_notification_v1 *notification)
 {
 	GSWatcherWayland *wayland = GS_WATCHER_WAYLAND (data);
 	GSWatcher        *watcher = GS_WATCHER (wayland);
 
-	gs_debug ("Wayland: idle notification received");
+	gs_debug ("Wayland: activation idle notification fired");
 
-	_gs_watcher_set_session_idle (watcher, TRUE);
 	_gs_watcher_set_session_idle_notice (watcher, FALSE);
+	_gs_watcher_set_session_idle (watcher, TRUE);
 }
 
 static void
-on_resumed (void                            *data,
-            struct ext_idle_notification_v1 *notification)
+on_activation_resumed (void                            *data,
+                       struct ext_idle_notification_v1 *notification)
 {
 	GSWatcherWayland *wayland = GS_WATCHER_WAYLAND (data);
 	GSWatcher        *watcher = GS_WATCHER (wayland);
 
-	gs_debug ("Wayland: resumed notification received");
+	gs_debug ("Wayland: activation resumed");
 
 	_gs_watcher_set_session_idle (watcher, FALSE);
 	_gs_watcher_set_session_idle_notice (watcher, FALSE);
 }
 
-static const struct ext_idle_notification_v1_listener idle_notification_listener =
+static const struct ext_idle_notification_v1_listener activation_listener =
 {
-	.idled = on_idled,
-	.resumed = on_resumed,
+	.idled = on_activation_idled,
+	.resumed = on_activation_resumed,
+};
+
+static void
+on_lock_notice_idled (void                            *data,
+                      struct ext_idle_notification_v1 *notification)
+{
+	GSWatcherWayland *wayland = GS_WATCHER_WAYLAND (data);
+	GSWatcher        *watcher = GS_WATCHER (wayland);
+
+	gs_debug ("Wayland: lock notice idle notification fired");
+
+	_gs_watcher_set_session_idle_notice (watcher, TRUE);
+}
+
+static void
+on_lock_notice_resumed (void                            *data,
+                        struct ext_idle_notification_v1 *notification)
+{
+	GSWatcherWayland *wayland = GS_WATCHER_WAYLAND (data);
+	GSWatcher        *watcher = GS_WATCHER (wayland);
+
+	gs_debug ("Wayland: lock notice resumed");
+
+	_gs_watcher_set_session_idle (watcher, FALSE);
+	_gs_watcher_set_session_idle_notice (watcher, FALSE);
+}
+
+static const struct ext_idle_notification_v1_listener lock_notice_listener =
+{
+	.idled = on_lock_notice_idled,
+	.resumed = on_lock_notice_resumed,
 };
 
 static struct ext_idle_notifier_v1 *
@@ -108,16 +143,13 @@ bind_idle_notifier (struct wl_registry *registry,
 }
 
 static void
-remove_idle_notification (GSWatcherWayland *wayland)
+remove_idle_notification (GSWatcherWayland                  *wayland,
+                          struct ext_idle_notification_v1 **notification)
 {
-	GSWatcherWaylandPrivate *priv;
-
-	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
-
-	if (priv->idle_notification != NULL)
+	if (*notification != NULL)
 	{
-		ext_idle_notification_v1_destroy (priv->idle_notification);
-		priv->idle_notification = NULL;
+		ext_idle_notification_v1_destroy (*notification);
+		*notification = NULL;
 	}
 }
 
@@ -132,6 +164,20 @@ remove_idle_notifier (GSWatcherWayland *wayland)
 	{
 		ext_idle_notifier_v1_destroy (priv->idle_notifier);
 		priv->idle_notifier = NULL;
+	}
+}
+
+static void
+remove_registry (GSWatcherWayland *wayland)
+{
+	GSWatcherWaylandPrivate *priv;
+
+	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
+
+	if (priv->registry != NULL)
+	{
+		wl_registry_destroy (priv->registry);
+		priv->registry = NULL;
 	}
 }
 
@@ -158,21 +204,23 @@ static const struct wl_registry_listener registry_listener =
 	.global = on_registry_global,
 };
 
-static void
+static struct ext_idle_notification_v1 *
 create_idle_notification (GSWatcherWayland *wayland,
-                          guint             timeout_ms)
+                          guint             timeout_ms,
+                          struct ext_idle_notification_v1_listener *listener)
 {
 	GSWatcherWaylandPrivate *priv;
 	GdkDisplay              *gdk_display;
 	struct wl_display       *display;
 	struct wl_seat          *seat;
+	struct ext_idle_notification_v1 *notification;
 
 	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
 
 	if (priv->idle_notifier == NULL)
 	{
 		gs_debug ("Wayland: idle notifier not available");
-		return;
+		return NULL;
 	}
 
 	gdk_display = gdk_display_get_default ();
@@ -180,33 +228,33 @@ create_idle_notification (GSWatcherWayland *wayland,
 	if (display == NULL)
 	{
 		gs_debug ("Wayland: could not get Wayland display");
-		return;
+		return NULL;
 	}
 
 	seat = gdk_wayland_seat_get_wl_seat (gdk_display_get_default_seat (gdk_display));
 	if (seat == NULL)
 	{
 		gs_debug ("Wayland: could not get Wayland seat");
-		return;
+		return NULL;
 	}
 
-	remove_idle_notification (wayland);
+	notification = ext_idle_notifier_v1_get_idle_notification (priv->idle_notifier,
+	                                                           timeout_ms,
+	                                                           seat);
 
-	priv->idle_notification = ext_idle_notifier_v1_get_idle_notification (priv->idle_notifier,
-	                                                                    timeout_ms,
-	                                                                    seat);
-
-	if (priv->idle_notification == NULL)
+	if (notification == NULL)
 	{
-		gs_debug ("Wayland: could not create idle notification");
-		return;
+		gs_debug ("Wayland: could not create idle notification for %u ms", timeout_ms);
+		return NULL;
 	}
 
-	ext_idle_notification_v1_add_listener (priv->idle_notification,
-	                                       &idle_notification_listener,
+	ext_idle_notification_v1_add_listener (notification,
+	                                       listener,
 	                                       wayland);
 
 	gs_debug ("Wayland: idle notification created with timeout %u ms", timeout_ms);
+
+	return notification;
 }
 
 static void
@@ -216,11 +264,12 @@ gs_watcher_wayland_activate_monitoring (GSWatcher *watcher,
 	GSWatcherWayland       *wayland = GS_WATCHER_WAYLAND (watcher);
 	GSWatcherWaylandPrivate *priv;
 	struct wl_display       *display;
-	struct wl_registry      *registry;
 
 	gs_debug ("Wayland: activating idle monitoring");
 
 	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
+
+	priv->timeout_ms = timeout_ms;
 
 	display = gdk_wayland_display_get_wl_display (gdk_display_get_default ());
 	if (display == NULL)
@@ -229,28 +278,45 @@ gs_watcher_wayland_activate_monitoring (GSWatcher *watcher,
 		return;
 	}
 
-	registry = wl_display_get_registry (display);
-	if (registry == NULL)
+	priv->registry = wl_display_get_registry (display);
+	if (priv->registry == NULL)
 	{
 		gs_debug ("Wayland: could not get Wayland registry");
 		return;
 	}
 
-	wl_registry_add_listener (registry, &registry_listener, wayland);
+	wl_registry_add_listener (priv->registry, &registry_listener, wayland);
 	wl_display_roundtrip (display);
 
-	create_idle_notification (wayland, timeout_ms);
+	remove_idle_notification (wayland, &priv->idle_notification);
+	remove_idle_notification (wayland, &priv->lock_notification);
+
+	priv->idle_notification = create_idle_notification (wayland,
+	                                                    timeout_ms,
+	                                                    &activation_listener);
+
+	if (priv->lock_delay_ms > 0)
+	{
+		priv->lock_notification = create_idle_notification (wayland,
+		                                                    timeout_ms + priv->lock_delay_ms,
+		                                                    &lock_notice_listener);
+	}
 }
 
 static void
 gs_watcher_wayland_deactivate_monitoring (GSWatcher *watcher)
 {
-	GSWatcherWayland *wayland = GS_WATCHER_WAYLAND (watcher);
+	GSWatcherWayland       *wayland = GS_WATCHER_WAYLAND (watcher);
+	GSWatcherWaylandPrivate *priv;
 
 	gs_debug ("Wayland: deactivating idle monitoring");
 
-	remove_idle_notification (wayland);
+	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
+
+	remove_idle_notification (wayland, &priv->idle_notification);
+	remove_idle_notification (wayland, &priv->lock_notification);
 	remove_idle_notifier (wayland);
+	remove_registry (wayland);
 }
 
 static void
@@ -270,14 +336,17 @@ gs_watcher_wayland_init (GSWatcherWayland *wayland)
 	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
 
 	priv->idle_notification = NULL;
+	priv->lock_notification = NULL;
 	priv->idle_notifier = NULL;
-	priv->idle_timeout_id = 0;
+	priv->registry = NULL;
+	priv->timeout_ms = 0;
+	priv->lock_delay_ms = 0;
 }
 
 static void
 gs_watcher_wayland_finalize (GObject *object)
 {
-	GSWatcherWayland       *wayland;
+	GSWatcherWayland        *wayland;
 	GSWatcherWaylandPrivate *priv;
 
 	g_return_if_fail (object != NULL);
@@ -286,8 +355,10 @@ gs_watcher_wayland_finalize (GObject *object)
 	wayland = GS_WATCHER_WAYLAND (object);
 	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
 
-	remove_idle_notification (wayland);
+	remove_idle_notification (wayland, &priv->idle_notification);
+	remove_idle_notification (wayland, &priv->lock_notification);
 	remove_idle_notifier (wayland);
+	remove_registry (wayland);
 
 	G_OBJECT_CLASS (gs_watcher_wayland_parent_class)->finalize (object);
 }

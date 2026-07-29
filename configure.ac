@@ -185,9 +185,6 @@ if test "x$enable_wayland" = "xyes"; then
   PKG_CHECK_MODULES(GTK_LAYER_SHELL, [gtk-layer-shell-0], [have_gtk_layer_shell=yes], [have_gtk_layer_shell=no])
 
   AC_PATH_PROG([WAYLAND_SCANNER], [wayland-scanner], [no])
-  if test "x$WAYLAND_SCANNER" = "xno"; then
-    AC_MSG_ERROR([wayland-scanner not found])
-  fi
 
   if test "x$have_wayland_protocols" = "xyes"; then
     WAYLAND_PROTOCOLS_DATADIR=`pkg-config --variable=pkgdatadir wayland-protocols`

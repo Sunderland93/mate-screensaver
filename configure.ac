@@ -184,8 +184,6 @@ if test "x$enable_wayland" = "xyes"; then
   PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
   PKG_CHECK_MODULES(GTK_LAYER_SHELL, [gtk-layer-shell-0], [have_gtk_layer_shell=yes], [have_gtk_layer_shell=no])
 
-  AC_PATH_PROG([WAYLAND_SCANNER], [wayland-scanner], [no])
-
   if test "x$have_wayland_protocols" = "xyes"; then
     WAYLAND_PROTOCOLS_DATADIR=`pkg-config --variable=pkgdatadir wayland-protocols`
   fi

@@ -388,7 +388,7 @@ preview_set_theme (GtkWidget  *widget,
 		gchar **themes;
 
 		themes = get_all_theme_ids ();
-		if (themes != NULL)
+		if (themes != NULL && g_strv_length (themes) > 0)
 		{
 			gint32  i;
 
@@ -397,6 +397,10 @@ preview_set_theme (GtkWidget  *widget,
                         g_strfreev (themes);
 
 			gs_job_start (job);
+		}
+		else
+		{
+			g_strfreev (themes);
 		}
 	}
 	else
@@ -1316,14 +1320,17 @@ constrain_list_size (GtkWidget      *widget,
 
 	/* constrain height to be the tree height up to a max */
 #ifdef ENABLE_X11
-	max_height = (HeightOfScreen (gdk_x11_screen_get_xscreen (gtk_widget_get_screen (widget)))) / 4;
-#else
+	if (GDK_IS_X11_DISPLAY (gdk_display_get_default ()))
+	{
+		max_height = (HeightOfScreen (gdk_x11_screen_get_xscreen (gtk_widget_get_screen (widget)))) / 4;
+	}
+	else
+#endif
 	{
 		GdkRectangle rect;
 		gdk_monitor_get_geometry (gdk_display_get_monitor_at_window (gdk_display_get_default (), gtk_widget_get_window (widget)), &rect);
 		max_height = rect.height / 4;
 	}
-#endif
 
 	gtk_widget_get_preferred_size (to_size, &req, NULL);
 	allocation->height = MIN (req.height, max_height);
@@ -1469,6 +1476,14 @@ get_best_visual_for_display (GdkDisplay *display)
 	gboolean      res;
 
 	visual = NULL;
+
+#ifdef ENABLE_X11
+	if (! GDK_IS_X11_DISPLAY (display))
+	{
+		return NULL;
+	}
+#endif
+
 	screen = gdk_display_get_default_screen (display);
 
 	error = NULL;

@@ -188,6 +188,9 @@ if test "x$enable_wayland" = "xyes"; then
     WAYLAND_PROTOCOLS_DATADIR=`pkg-config --variable=pkgdatadir wayland-protocols`
   fi
 
+  PKG_CHECK_VAR([WAYLAND_SCANNER], [wayland-scanner], [wayland_scanner], [],
+                [AC_MSG_ERROR([wayland-scanner not found])])
+
   if test "x$have_wayland_client" = "xyes" && test "x$have_wayland_protocols" = "xyes" && test "x$have_gdk_wayland" = "xyes" && test "x$have_libwlembed" = "xyes" && test "x$have_libwlembed_gtk3" = "xyes" && test "x$have_gtk_layer_shell" = "xyes"; then
     AC_DEFINE(ENABLE_WAYLAND, 1, [Build with Wayland support])
   else

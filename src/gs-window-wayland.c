@@ -52,7 +52,6 @@ struct GSWindowWaylandPrivate
 {
 	struct ext_session_lock_surface_v1 *lock_surface;
 
-	GtkWidget                          *socket;
 	GPid                                lock_pid;
 	gint                                lock_watch_id;
 	gint                                dialog_response;
@@ -279,27 +278,6 @@ lock_command_watch (GIOChannel   *source,
 }
 
 static void
-create_lock_socket (GSWindow *window,
-                    guint32   id)
-{
-	GSWindowWaylandPrivate *priv;
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	priv->socket = wle_gtk_socket_new (gs_wayland_compositor);
-	if (priv->socket == NULL)
-	{
-		gs_debug ("Failed to create WleGtkSocket");
-		return;
-	}
-
-	gtk_box_pack_start (GTK_BOX (priv->vbox), priv->socket, TRUE, TRUE, 0);
-	gtk_widget_show (priv->socket);
-
-	gs_debug ("Lock socket created");
-}
-
-static void
 popdown_dialog (GSWindow *window)
 {
 	GSWindowWaylandPrivate *priv;
@@ -307,12 +285,6 @@ popdown_dialog (GSWindow *window)
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	gs_window_dialog_finish (window);
-
-	if (priv->socket != NULL)
-	{
-		gtk_widget_destroy (priv->socket);
-		priv->socket = NULL;
-	}
 
 	gtk_widget_show (priv->drawing_area);
 
@@ -869,7 +841,6 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (wayland);
 
 	priv->lock_surface = NULL;
-	priv->socket = NULL;
 	priv->lock_pid = 0;
 	priv->lock_watch_id = 0;
 	priv->dialog_response = DIALOG_RESPONSE_CANCEL;

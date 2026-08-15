@@ -7,6 +7,7 @@ AM_CPPFLAGS =							\
 	-I.							\
 	-I$(srcdir)						\
 	$(MATE_SCREENSAVER_SAVER_CFLAGS)			\
+	$(LIBWLEMBED_GTK3_CFLAGS)				\
 	$(DISABLE_DEPRECATED_CFLAGS)				\
 	-DLIBEXECDIR=\""$(libexecdir)"\"			\
 	-DMATELOCALEDIR=\""$(datadir)/locale"\"			\
@@ -73,6 +74,7 @@ noinst_LIBRARIES =			\
 
 libgs_theme_engine_a_CPPFLAGS =					\
 	$(MATE_SCREENSAVER_SAVER_CFLAGS)			\
+	$(LIBWLEMBED_GTK3_CFLAGS)				\
 	-DDATADIR=\""$(datadir)"\"				\
 	$(NULL)
 
@@ -99,6 +101,7 @@ floaters_SOURCES =	\
 floaters_LDADD =		       \
 	libgs-theme-engine.a		\
 	$(MATE_SCREENSAVER_SAVER_LIBS) \
+	$(LIBWLEMBED_GTK3_LIBS)		\
 	-lm                             \
 	$(NULL)
 
@@ -111,6 +114,7 @@ popsquares_SOURCES = 		\
 popsquares_LDADD =			\
 	libgs-theme-engine.a 		\
 	$(MATE_SCREENSAVER_SAVER_LIBS)	\
+	$(LIBWLEMBED_GTK3_LIBS)		\
 	$(NULL)
 
 slideshow_SOURCES =   \
@@ -124,6 +128,7 @@ slideshow_SOURCES =   \
 slideshow_LDADD =     \
 	libgs-theme-engine.a 		\
 	$(MATE_SCREENSAVER_SAVER_LIBS)	\
+	$(LIBWLEMBED_GTK3_LIBS)		\
 	$(NULL)
 
 starfield_SOURCES = 	\
@@ -135,6 +140,7 @@ starfield_SOURCES = 	\
 starfield_LDADD =			\
 	libgs-theme-engine.a 		\
 	$(MATE_SCREENSAVER_SAVER_LIBS)	\
+	$(LIBWLEMBED_GTK3_LIBS)		\
 	-lm                             \
 	$(NULL)
 

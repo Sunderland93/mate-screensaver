@@ -395,6 +395,7 @@ mate_screensaver_preferences_SOURCES =	\
 
 mate_screensaver_preferences_LDADD =	\
 	$(MATE_SCREENSAVER_CAPPLET_LIBS)	\
+	$(WAYLAND_LDADD)			\
 	$(NULL)
 
 EXTRA_DIST =				\

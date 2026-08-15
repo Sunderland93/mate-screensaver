@@ -1975,7 +1975,7 @@ gs_window_x11_init (GSWindowX11 *x11)
 	gtk_widget_show (window->priv->vbox);
 	gtk_container_add (GTK_CONTAINER (window), window->priv->vbox);
 
-	window->priv->drawing_area = gtk_drawing_area_new ();
+	window->priv->drawing_area = gtk_socket_new ();
 	gtk_widget_show (window->priv->drawing_area);
 	gtk_widget_set_app_paintable (window->priv->drawing_area, TRUE);
 	gtk_box_pack_start (GTK_BOX (window->priv->vbox),
@@ -1983,6 +1983,10 @@ gs_window_x11_init (GSWindowX11 *x11)
 	g_signal_connect (window->priv->drawing_area,
 	                  "draw",
 	                  G_CALLBACK (on_drawing_area_draw),
+	                  NULL);
+	g_signal_connect (window->priv->drawing_area,
+	                  "plug-removed",
+	                  G_CALLBACK (gtk_true),
 	                  NULL);
 	create_info_bar (window);
 }

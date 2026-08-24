@@ -67,6 +67,10 @@ struct GSManagerPrivate
 	struct ext_session_lock_manager_v1 *session_lock_manager;
 	struct ext_session_lock_v1         *session_lock;
 	gboolean                            session_lock_active;
+	/* raise the unlock dialog as soon as the lock is confirmed
+	   (explicit lock request), as opposed to idle activation where
+	   the saver theme should keep running until user input */
+	gboolean                            raise_dialog_on_lock;
 #endif
 
 	/* Policy */
@@ -197,6 +201,16 @@ manager_session_lock_handle_locked (void                        *data,
 	for (l = manager->priv->windows; l; l = l->next)
 	{
 		gs_window_create_lock_surface (GS_WINDOW (l->data));
+	}
+
+	/* Only raise the unlock dialog for an explicit lock request. On idle
+	   activation the saver theme keeps running until real user input
+	   arrives (same as xfce4-screensaver, which never pops the dialog
+	   from the locked event). */
+	if (manager->priv->raise_dialog_on_lock)
+	{
+		manager->priv->raise_dialog_on_lock = FALSE;
+		gs_manager_request_unlock (manager);
 	}
 }
 
@@ -646,6 +660,14 @@ gs_manager_set_lock_active (GSManager *manager,
 		GSList *l;
 
 		manager->priv->lock_active = (lock_active != FALSE);
+
+		/* an explicit lock request wants the password prompt right away;
+		   idle activation does not (saver keeps running until input) */
+		if (lock_active)
+		{
+			manager->priv->raise_dialog_on_lock = TRUE;
+		}
+
 		for (l = manager->priv->windows; l; l = l->next)
 		{
 			gs_window_set_lock_enabled (l->data, lock_active);
@@ -1480,8 +1502,22 @@ apply_background_to_window (GSManager *manager,
 	GSettings       *settings;
 	char            *filename;
 	cairo_surface_t *surface;
+	GdkWindow       *gdk_window;
 	int              width;
 	int              height;
+
+	gdk_window = gs_window_get_gdk_window (window);
+	if (gdk_window == NULL)
+	{
+		return;
+	}
+
+	width = gdk_window_get_width (gdk_window);
+	height = gdk_window_get_height (gdk_window);
+	if (width <= 0 || height <= 0)
+	{
+		return;
+	}
 
 	mate_bg_load_from_preferences(manager->priv->bg);
 
@@ -1500,11 +1536,9 @@ apply_background_to_window (GSManager *manager,
 		gs_window_set_background_surface (window, NULL);
 	}
 
-	gtk_widget_get_preferred_width (GTK_WIDGET (window), &width, NULL);
-	gtk_widget_get_preferred_height (GTK_WIDGET (window), &height, NULL);
 	gs_debug ("Creating background w:%d h:%d", width, height);
 	surface = mate_bg_create_surface (manager->priv->bg,
-	                                  gs_window_get_gdk_window (window),
+	                                  gdk_window,
 	                                  width,
 	                                  height,
 	                                  FALSE);
@@ -1814,8 +1848,14 @@ on_display_monitor_added (GdkDisplay *display,
 	}
 #endif
 
-	/* and put unlock dialog up whereever it's supposed to be */
-	gs_manager_request_unlock (manager);
+#ifdef ENABLE_X11
+	/* and put unlock dialog up whereever it's supposed to be.
+	   On Wayland user input brings it up instead. */
+	if (! GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
+	{
+		gs_manager_request_unlock (manager);
+	}
+#endif
 }
 
 static void
@@ -1832,7 +1872,10 @@ on_display_monitor_removed (GdkDisplay *display,
 	          gdk_display_get_name (display), n_monitors);
 
 #ifdef ENABLE_X11
-	gdk_x11_grab_server ();
+	if (GDK_IS_X11_DISPLAY (display))
+	{
+		gdk_x11_grab_server ();
+	}
 #endif
 
 	/* remove the now extra window */
@@ -1858,7 +1901,10 @@ on_display_monitor_removed (GdkDisplay *display,
 
 	gdk_display_flush (display);
 #ifdef ENABLE_X11
-	gdk_x11_ungrab_server ();
+	if (GDK_IS_X11_DISPLAY (display))
+	{
+		gdk_x11_ungrab_server ();
+	}
 #endif
 }
 

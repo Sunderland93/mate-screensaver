@@ -197,11 +197,14 @@ static void gs_monitor_lock_screen(GSMonitor* monitor)
 static void gs_monitor_simulate_user_activity(GSMonitor* monitor)
 {
 #ifdef ENABLE_X11
-	Display *display = gdk_x11_display_get_xdisplay (gdk_display_get_default ());
-	XScreenSaverSuspend (display, TRUE);
-	XSync (display, FALSE);
-	XScreenSaverSuspend (display, FALSE);
-	XSync (display, FALSE);
+	if (GDK_IS_X11_DISPLAY (gdk_display_get_default ()))
+	{
+		Display *display = gdk_x11_display_get_xdisplay (gdk_display_get_default ());
+		XScreenSaverSuspend (display, TRUE);
+		XSync (display, FALSE);
+		XScreenSaverSuspend (display, FALSE);
+		XSync (display, FALSE);
+	}
 #endif
 
 	/* request that the manager unlock -

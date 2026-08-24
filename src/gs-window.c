@@ -443,10 +443,10 @@ gs_window_init (GSWindow *window)
 
 	window->priv->obscured = FALSE;
 	window->priv->dialog_up = FALSE;
+	window->priv->drawing_area = NULL;
 
 #ifdef ENABLE_X11
 	window->priv->vbox = NULL;
-	window->priv->drawing_area = NULL;
 	window->priv->lock_box = NULL;
 	window->priv->lock_socket = NULL;
 	window->priv->keyboard_socket = NULL;
@@ -699,11 +699,7 @@ gs_window_get_drawing_area (GSWindow *window)
 {
 	g_return_val_if_fail (GS_IS_WINDOW (window), NULL);
 
-#ifdef ENABLE_X11
 	return window->priv->drawing_area;
-#else
-	return NULL;
-#endif
 }
 
 void

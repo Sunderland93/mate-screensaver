@@ -46,11 +46,26 @@ struct ext_session_lock_v1 *gs_wayland_session_lock = NULL;
 
 #define MATE_SCREENSAVER_DIALOG_PATH LIBEXECDIR "/mate-screensaver-dialog"
 
+/* How long to wait for the lock surface to get mapped and focused
+ * before bringing up the unlock dialog anyway (200ms per try) */
+#define MAX_DIALOG_DEFER_TRIES 25
+
+/* Minimum pointer travel (pixels) between events before motion
+ * counts as real user activity */
+#define MOTION_ACTIVITY_THRESHOLD 4
+
+/* Upper bound for key events cached while the saver is running,
+ * to be replayed into the unlock dialog once it appears */
+#define MAX_QUEUED_EVENTS 16
+
 typedef struct GSWindowWaylandPrivate GSWindowWaylandPrivate;
 
 struct GSWindowWaylandPrivate
 {
 	struct ext_session_lock_surface_v1 *lock_surface;
+
+	GtkWidget                          *lock_box;
+	GtkWidget                          *lock_socket;
 
 	GPid                                lock_pid;
 	gint                                lock_watch_id;
@@ -59,10 +74,20 @@ struct GSWindowWaylandPrivate
 
 	guint                               watchdog_timer_id;
 	guint                               popup_dialog_idle_id;
+	guint                               popup_dialog_retry_id;
+	guint                               dialog_defer_count;
 	GTimer                             *timer;
 
 	GtkWidget                          *vbox;
-	GtkWidget                          *drawing_area;
+
+	/* filtering stationary-cursor pointer events */
+	gboolean                            have_last_motion;
+	gdouble                             last_motion_x;
+	gdouble                             last_motion_y;
+
+	/* key events typed while only the saver was running,
+	   replayed into the unlock dialog when it appears */
+	GList                              *key_events;
 };
 
 typedef struct
@@ -88,6 +113,15 @@ static void gs_window_wayland_finalize (GObject *object);
 
 static void popdown_dialog (GSWindow *window);
 
+static gboolean popup_dialog_idle (gpointer data);
+
+static void remove_key_events (GSWindow *window);
+
+static void lock_plug_added_cb (GSWindow *window);
+
+static void lock_socket_show_cb (GtkWidget *widget,
+                                 GSWindow  *window);
+
 enum
 {
 	DIALOG_RESPONSE_CANCEL,
@@ -100,6 +134,11 @@ set_invisible_cursor (GdkWindow *window,
 {
 	GdkDisplay *display;
 	GdkCursor  *cursor = NULL;
+
+	if (window == NULL)
+	{
+		return;
+	}
 
 	if (invisible)
 	{
@@ -278,19 +317,11 @@ lock_command_watch (GIOChannel   *source,
 }
 
 static void
-popdown_dialog (GSWindow *window)
+remove_popup_dialog_sources (GSWindow *window)
 {
 	GSWindowWaylandPrivate *priv;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
-
-	gs_window_dialog_finish (window);
-
-	gtk_widget_show (priv->drawing_area);
-
-	set_invisible_cursor (gtk_widget_get_window (GTK_WIDGET (window)), TRUE);
-
-	priv->dialog_quit_requested = FALSE;
 
 	if (priv->popup_dialog_idle_id != 0)
 	{
@@ -298,22 +329,131 @@ popdown_dialog (GSWindow *window)
 		priv->popup_dialog_idle_id = 0;
 	}
 
+	if (priv->popup_dialog_retry_id != 0)
+	{
+		g_source_remove (priv->popup_dialog_retry_id);
+		priv->popup_dialog_retry_id = 0;
+	}
+
+	priv->dialog_defer_count = 0;
+}
+
+static void
+destroy_lock_box (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	/* drop any keys still queued for a dialog that is going away */
+	remove_key_events (window);
+
+	if (priv->lock_box != NULL)
+	{
+		gtk_widget_destroy (priv->lock_box);
+		priv->lock_box = NULL;
+	}
+
+	priv->lock_socket = NULL;
+}
+
+static void
+popdown_dialog (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+	GdkWindow              *gdkwin;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	gs_window_dialog_finish (window);
+
+	remove_popup_dialog_sources (window);
+
+	destroy_lock_box (window);
+
+	if (window->priv->drawing_area != NULL)
+	{
+		gtk_widget_show (window->priv->drawing_area);
+	}
+
+	gdkwin = gtk_widget_get_window (GTK_WIDGET (window));
+	if (gdkwin != NULL)
+	{
+		set_invisible_cursor (gdkwin, TRUE);
+	}
+
+	priv->dialog_quit_requested = FALSE;
+
 	wayland_window_set_dialog_up (window, FALSE);
+}
+
+/* just for debugging */
+static gboolean
+error_watch (GIOChannel   *source,
+             GIOCondition  condition,
+             gpointer      data)
+{
+	gboolean finished = FALSE;
+
+	if (condition & G_IO_IN)
+	{
+		GIOStatus status;
+		GError   *error = NULL;
+		char     *line;
+
+		line = NULL;
+		status = g_io_channel_read_line (source, &line, NULL, NULL, &error);
+
+		switch (status)
+		{
+		case G_IO_STATUS_NORMAL:
+			gs_debug ("command error output: %s", line);
+			break;
+		case G_IO_STATUS_EOF:
+			finished = TRUE;
+			break;
+		case G_IO_STATUS_ERROR:
+			finished = TRUE;
+			gs_debug ("Error reading from child: %s\n", error->message);
+			g_error_free (error);
+			return FALSE;
+		case G_IO_STATUS_AGAIN:
+		default:
+			break;
+		}
+		g_free (line);
+	}
+	else if (condition & G_IO_HUP)
+	{
+		finished = TRUE;
+	}
+
+	if (finished)
+	{
+		return FALSE;
+	}
+
+	return TRUE;
 }
 
 static gboolean
 spawn_on_window (GSWindow     *window,
                  const char   *command,
+                 const char   *embedding_token,
                  GPid         *child_pid,
                  GIOFunc       watch_func,
                  gpointer      watch_data,
                  gint         *watch_id)
 {
-	gboolean   result;
-	GError    *error;
-	char     **argv;
-	char     **envp;
-	GIOChannel *channel;
+	gboolean               result;
+	GError                *error;
+	char                 **argv;
+	char                 **envp;
+	GIOChannel            *channel;
+	WleEmbeddedCompositor *compositor;
+	int                    standard_output;
+	int                    standard_error;
+	gint                   id;
 
 	g_return_val_if_fail (GS_IS_WINDOW (window), FALSE);
 	g_return_val_if_fail (command != NULL, FALSE);
@@ -330,36 +470,86 @@ spawn_on_window (GSWindow     *window,
 
 	envp = g_get_environ ();
 
-	result = g_spawn_async_with_pipes (NULL,
-	                                   argv,
-	                                   envp,
-	                                   G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH,
-	                                   NULL,
-	                                   NULL,
-	                                   child_pid,
-	                                   NULL,
-	                                   NULL,
-	                                   NULL,
-	                                   &error);
+	compositor = gs_wayland_compositor;
 
-	g_strfreev (argv);
-	g_strfreev (envp);
+	if (embedding_token != NULL && compositor != NULL &&
+	    GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
+	{
+		/* Spawn the child against the embedded compositor so its
+		 * windows can be embedded into our lock surface. The real
+		 * display stays reachable via WAYLAND_PARENT_DISPLAY. */
+		gs_debug ("spawn_on_window: spawning '%s' on embedded compositor '%s'",
+		          command, wle_embedded_compositor_get_socket_name (compositor));
+
+		envp = g_environ_setenv (envp, "XSCREENSAVER_WINDOW", embedding_token, TRUE);
+
+		result = wle_embedded_compositor_spawn_with_pipes (compositor,
+		                                                   NULL,
+		                                                   argv,
+		                                                   envp,
+		                                                   G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+		                                                   NULL,
+		                                                   NULL,
+		                                                   child_pid,
+		                                                   NULL,
+		                                                   &standard_output,
+		                                                   &standard_error,
+		                                                   &error);
+	}
+	else
+	{
+		result = g_spawn_async_with_pipes (NULL,
+		                                   argv,
+		                                   envp,
+		                                   G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH,
+		                                   NULL,
+		                                   NULL,
+		                                   child_pid,
+		                                   NULL,
+		                                   &standard_output,
+		                                   &standard_error,
+		                                   &error);
+	}
 
 	if (! result)
 	{
 		gs_debug ("Could not start command: %s", error->message);
 		g_error_free (error);
+		g_strfreev (argv);
+		g_strfreev (envp);
 		return FALSE;
 	}
 
-	channel = g_io_channel_unix_new (*child_pid);
+	/* output channel */
+	channel = g_io_channel_unix_new (standard_output);
 	g_io_channel_set_close_on_unref (channel, TRUE);
-	g_io_channel_set_flags (channel, G_IO_FLAG_NONBLOCK, NULL);
-	*watch_id = g_io_add_watch (channel,
-	                            G_IO_IN | G_IO_HUP | G_IO_ERR,
-	                            watch_func,
-	                            watch_data);
+	g_io_channel_set_flags (channel,
+	                        g_io_channel_get_flags (channel) | G_IO_FLAG_NONBLOCK,
+	                        NULL);
+	id = g_io_add_watch (channel,
+	                     G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+	                     watch_func,
+	                     watch_data);
+	if (watch_id != NULL)
+	{
+		*watch_id = id;
+	}
 	g_io_channel_unref (channel);
+
+	/* error channel */
+	channel = g_io_channel_unix_new (standard_error);
+	g_io_channel_set_close_on_unref (channel, TRUE);
+	g_io_channel_set_flags (channel,
+	                        g_io_channel_get_flags (channel) | G_IO_FLAG_NONBLOCK,
+	                        NULL);
+	g_io_add_watch (channel,
+	                G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+	                error_watch,
+	                NULL);
+	g_io_channel_unref (channel);
+
+	g_strfreev (argv);
+	g_strfreev (envp);
 
 	return TRUE;
 }
@@ -371,16 +561,11 @@ popup_dialog (GSWindow *window)
 	WleEmbeddedCompositor  *compositor;
 	gboolean                result;
 	GString                *command;
+	const char             *token;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	gs_debug ("Popping up dialog");
-
-	if (! gtk_window_is_active (GTK_WINDOW (window)))
-	{
-		gs_debug ("Window is not active, deferring dialog");
-		return;
-	}
 
 	compositor = gs_wayland_compositor;
 	if (compositor == NULL)
@@ -388,6 +573,37 @@ popup_dialog (GSWindow *window)
 		gs_debug ("No embedded compositor available");
 		return;
 	}
+
+	if (priv->lock_socket != NULL)
+	{
+		gs_debug ("Dialog is already up");
+		return;
+	}
+
+	/* The compositor only routes keyboard events to the lock surface
+	 * once it is mapped and has keyboard focus. Wait a little rather
+	 * than dropping the request entirely. */
+	if (! gtk_widget_get_mapped (GTK_WIDGET (window)) ||
+	    ! gtk_window_is_active (GTK_WINDOW (window)))
+	{
+		if (priv->dialog_defer_count < MAX_DIALOG_DEFER_TRIES)
+		{
+			priv->dialog_defer_count++;
+			gs_debug ("Window not ready for dialog, retrying (%d/%d)",
+			          priv->dialog_defer_count, MAX_DIALOG_DEFER_TRIES);
+			if (priv->popup_dialog_retry_id != 0)
+			{
+				g_source_remove (priv->popup_dialog_retry_id);
+			}
+			priv->popup_dialog_retry_id = g_timeout_add (200, popup_dialog_idle, window);
+			return;
+		}
+
+		gs_debug ("Window still not focused after %d tries, bringing up dialog anyway",
+		          priv->dialog_defer_count);
+	}
+
+	priv->dialog_defer_count = 0;
 
 	command = g_string_new (MATE_SCREENSAVER_DIALOG_PATH);
 
@@ -416,7 +632,40 @@ popup_dialog (GSWindow *window)
 		command = g_string_append (command, " --verbose");
 	}
 
-	gtk_widget_hide (priv->drawing_area);
+	priv->lock_socket = wle_gtk_socket_new (compositor);
+	if (priv->lock_socket == NULL)
+	{
+		gs_debug ("Failed to create WleGtkSocket for dialog");
+		g_string_free (command, TRUE);
+		return;
+	}
+
+	priv->lock_box = gtk_grid_new ();
+	gtk_widget_set_halign (priv->lock_box, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign (priv->lock_box, GTK_ALIGN_CENTER);
+	gtk_widget_show (priv->lock_box);
+	gtk_box_pack_start (GTK_BOX (priv->vbox), priv->lock_box, TRUE, TRUE, 0);
+	gtk_container_add (GTK_CONTAINER (priv->lock_box), priv->lock_socket);
+
+	/* Show the socket only once the dialog's plug has actually embedded,
+	 * like xfce4-screensaver does; the "show" handler below then runs at
+	 * the right time to focus the entry and replay queued keys. */
+	g_signal_connect_swapped (priv->lock_socket,
+	                          "plug-added",
+	                          G_CALLBACK (lock_plug_added_cb),
+	                          window);
+	g_signal_connect (priv->lock_socket,
+	                  "show",
+	                  G_CALLBACK (lock_socket_show_cb),
+	                  window);
+
+	token = wle_gtk_socket_get_embedding_token (WLE_GTK_SOCKET (priv->lock_socket));
+	gs_debug ("Dialog embedding token: %s", token != NULL ? token : "(null)");
+
+	if (window->priv->drawing_area != NULL)
+	{
+		gtk_widget_hide (window->priv->drawing_area);
+	}
 
 	gtk_widget_queue_draw (GTK_WIDGET (window));
 	set_invisible_cursor (gtk_widget_get_window (GTK_WIDGET (window)), FALSE);
@@ -426,6 +675,7 @@ popup_dialog (GSWindow *window)
 
 	result = spawn_on_window (window,
 	                          command->str,
+	                          token,
 	                          &priv->lock_pid,
 	                          (GIOFunc) lock_command_watch,
 	                          window,
@@ -433,6 +683,15 @@ popup_dialog (GSWindow *window)
 	if (! result)
 	{
 		gs_debug ("Could not start command: %s", command->str);
+
+		destroy_lock_box (window);
+
+		if (window->priv->drawing_area != NULL)
+		{
+			gtk_widget_show (window->priv->drawing_area);
+		}
+
+		set_invisible_cursor (gtk_widget_get_window (GTK_WIDGET (window)), TRUE);
 	}
 
 	g_string_free (command, TRUE);
@@ -544,23 +803,20 @@ static const struct ext_session_lock_surface_v1_listener lock_surface_listener =
 	lock_surface_handle_configure,
 };
 
-void
-gs_window_wayland_create_lock_surface (GSWindow *window)
+static void
+attach_lock_surface (GSWindow *window)
 {
-	GSWindowWaylandPrivate    *priv;
-	GdkWindow                 *gdk_window;
-	GdkMonitor                *monitor;
-	struct wl_surface         *wl_surface;
-	struct wl_output          *wl_output;
+	GSWindowWaylandPrivate     *priv;
+	GdkWindow                  *gdk_window;
+	GdkMonitor                 *monitor;
+	struct wl_surface          *wl_surface;
+	struct wl_output           *wl_output;
 	struct ext_session_lock_v1 *session_lock;
-
-	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	if (priv->lock_surface != NULL)
 	{
-		gs_debug ("Lock surface already exists");
 		return;
 	}
 
@@ -578,6 +834,9 @@ gs_window_wayland_create_lock_surface (GSWindow *window)
 		return;
 	}
 
+	/* The GdkWindow must be pristine here: we attach during realize,
+	 * before GTK ever maps the surface or attaches a buffer, exactly
+	 * like xfce4-screensaver does. No recreation dance needed. */
 	gdk_wayland_window_set_use_custom_surface (gdk_window);
 
 	wl_surface = gdk_wayland_window_get_wl_surface (gdk_window);
@@ -612,6 +871,14 @@ gs_window_wayland_create_lock_surface (GSWindow *window)
 	{
 		gs_debug ("Failed to create lock surface");
 	}
+}
+
+void
+gs_window_wayland_create_lock_surface (GSWindow *window)
+{
+	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
+
+	attach_lock_surface (window);
 }
 
 static void
@@ -688,6 +955,9 @@ gs_window_real_show (GSWindow *window)
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
+	/* start each activation with a fresh motion baseline */
+	priv->have_last_motion = FALSE;
+
 	if (priv->timer != NULL)
 	{
 		g_timer_destroy (priv->timer);
@@ -739,7 +1009,32 @@ gs_window_real_realize (GtkWidget *widget)
 
 	gtk_widget_set_app_paintable (widget, TRUE);
 
+	/* Attach the ext-session-lock surface role right away, while the
+	 * underlying wl_surface is still pristine (unmapped, no buffer).
+	 * This is how the window is meant to live its whole life. */
+	if (gs_wayland_session_lock != NULL)
+	{
+		attach_lock_surface (GS_WINDOW (widget));
+	}
+
 	gs_debug ("Wayland window realized");
+}
+
+static void
+gs_window_wayland_real_destroy (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	remove_watchdog_timer (window);
+
+	popdown_dialog (window);
+
+	destroy_lock_surface (window);
+
+	window->priv->drawing_area = NULL;
+	priv->vbox = NULL;
 }
 
 static void
@@ -759,13 +1054,141 @@ gs_window_real_unrealize (GtkWidget *widget)
 	}
 }
 
+static void
+maybe_handle_activity (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+	gboolean                handled;
+
+	handled = FALSE;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	/* if the unlock dialog is already up, don't re-trigger */
+	if (priv->lock_socket != NULL)
+	{
+		return;
+	}
+
+	if (! gtk_widget_get_sensitive (GTK_WIDGET (window)))
+	{
+		return;
+	}
+
+	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0, &handled);
+}
+
+static void
+queue_key_event (GSWindow      *window,
+                 GdkEventKey   *event)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	/* Eat the first return, enter, escape, or space */
+	if (priv->key_events == NULL
+	        && (event->keyval == GDK_KEY_Return
+	            || event->keyval == GDK_KEY_KP_Enter
+	            || event->keyval == GDK_KEY_Escape
+	            || event->keyval == GDK_KEY_space))
+	{
+		return;
+	}
+
+	/* Don't queue keys that may cause focus navigation in the dialog */
+	if (g_list_length (priv->key_events) < MAX_QUEUED_EVENTS
+	        && event->keyval != GDK_KEY_Tab
+	        && event->keyval != GDK_KEY_Up
+	        && event->keyval != GDK_KEY_Down)
+	{
+		priv->key_events = g_list_prepend (priv->key_events,
+		                                   gdk_event_copy ((GdkEvent *) event));
+	}
+}
+
+static void
+forward_key_events (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	priv->key_events = g_list_reverse (priv->key_events);
+
+	while (priv->key_events != NULL)
+	{
+		GdkEventKey *event = priv->key_events->data;
+
+		gtk_window_propagate_key_event (GTK_WINDOW (window), event);
+
+		gdk_event_free ((GdkEvent *) event);
+		priv->key_events = g_list_delete_link (priv->key_events,
+		                                       priv->key_events);
+	}
+}
+
+static void
+remove_key_events (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	while (priv->key_events != NULL)
+	{
+		gdk_event_free ((GdkEvent *) priv->key_events->data);
+		priv->key_events = g_list_delete_link (priv->key_events,
+		                                       priv->key_events);
+	}
+}
+
+static void
+lock_plug_added_cb (GSWindow *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	gtk_widget_show (priv->lock_socket);
+}
+
+static void
+lock_socket_show_cb (GtkWidget *widget,
+                     GSWindow  *window)
+{
+	GSWindowWaylandPrivate *priv;
+
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	gtk_widget_child_focus (priv->lock_socket, GTK_DIR_TAB_FORWARD);
+
+	/* send queued events to the dialog */
+	forward_key_events (window);
+}
+
 static gboolean
 gs_window_real_key_press_event (GtkWidget   *widget,
                                 GdkEventKey *event)
 {
-	GSWindow *window = GS_WINDOW (widget);
+	GSWindow               *window = GS_WINDOW (widget);
+	GSWindowWaylandPrivate *priv;
 
-	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0);
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	/* Ignore brightness keys: adjusting the screen brightness while
+	 * idle should not bring up the unlock dialog */
+	if (event->hardware_keycode == 101 || event->hardware_keycode == 212
+	        || (gdk_keyval_name (event->keyval) != NULL
+	            && g_str_has_prefix (gdk_keyval_name (event->keyval), "XF86MonBrightness")))
+	{
+		gs_debug ("Ignoring brightness key");
+		return TRUE;
+	}
+
+	maybe_handle_activity (window);
+
+	queue_key_event (window, event);
 
 	if (GTK_WIDGET_CLASS (gs_window_wayland_parent_class)->key_press_event)
 	{
@@ -781,7 +1204,7 @@ gs_window_real_button_press_event (GtkWidget      *widget,
 {
 	GSWindow *window = GS_WINDOW (widget);
 
-	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0);
+	maybe_handle_activity (window);
 
 	return FALSE;
 }
@@ -792,7 +1215,7 @@ gs_window_real_scroll_event (GtkWidget      *widget,
 {
 	GSWindow *window = GS_WINDOW (widget);
 
-	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0);
+	maybe_handle_activity (window);
 
 	return FALSE;
 }
@@ -801,9 +1224,36 @@ static gboolean
 gs_window_real_motion_notify_event (GtkWidget      *widget,
                                     GdkEventMotion *event)
 {
-	GSWindow *window = GS_WINDOW (widget);
+	GSWindow               *window = GS_WINDOW (widget);
+	GSWindowWaylandPrivate *priv;
+	gdouble                 dx, dy;
 
-	g_signal_emit (window, gs_window_signals [GS_WINDOW_SIGNAL_ACTIVITY], 0);
+	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
+
+	/* Wayland re-delivers pointer events with unchanged coordinates when
+	 * surfaces are reconfigured underneath a stationary cursor (e.g. while
+	 * the embedded saver settles its subsurface offsets after mapping).
+	 * Only treat real movement as user activity, like X11 did. */
+	if (priv->have_last_motion)
+	{
+		dx = event->x - priv->last_motion_x;
+		dy = event->y - priv->last_motion_y;
+
+		if ((dx < 0 ? -dx : dx) < MOTION_ACTIVITY_THRESHOLD &&
+		        (dy < 0 ? -dy : dy) < MOTION_ACTIVITY_THRESHOLD)
+		{
+			return FALSE;
+		}
+
+		gs_debug ("Pointer moved to (%.1f,%.1f) from (%.1f,%.1f), treating as activity",
+		          event->x, event->y, priv->last_motion_x, priv->last_motion_y);
+	}
+
+	priv->have_last_motion = TRUE;
+	priv->last_motion_x = event->x;
+	priv->last_motion_y = event->y;
+
+	maybe_handle_activity (window);
 
 	return FALSE;
 }
@@ -818,7 +1268,7 @@ gs_window_wayland_class_init (GSWindowWaylandClass *klass)
 	object_class->finalize = gs_window_wayland_finalize;
 
 	window_class->real_show = gs_window_real_show;
-	window_class->real_destroy = NULL;
+	window_class->real_destroy = gs_window_wayland_real_destroy;
 	window_class->request_unlock = gs_window_wayland_request_unlock;
 	window_class->cancel_unlock_request = gs_window_wayland_cancel_unlock_request;
 	window_class->create_lock_surface = gs_window_wayland_create_lock_surface;
@@ -836,20 +1286,25 @@ gs_window_wayland_class_init (GSWindowWaylandClass *klass)
 static void
 gs_window_wayland_init (GSWindowWayland *wayland)
 {
+	GSWindow               *window = GS_WINDOW (wayland);
 	GSWindowWaylandPrivate *priv;
 
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (wayland);
 
 	priv->lock_surface = NULL;
+	priv->lock_box = NULL;
+	priv->lock_socket = NULL;
 	priv->lock_pid = 0;
 	priv->lock_watch_id = 0;
 	priv->dialog_response = DIALOG_RESPONSE_CANCEL;
 	priv->dialog_quit_requested = FALSE;
 	priv->watchdog_timer_id = 0;
 	priv->popup_dialog_idle_id = 0;
+	priv->popup_dialog_retry_id = 0;
+	priv->dialog_defer_count = 0;
+	priv->key_events = NULL;
 	priv->timer = NULL;
 	priv->vbox = NULL;
-	priv->drawing_area = NULL;
 
 	gtk_window_set_decorated (GTK_WINDOW (wayland), FALSE);
 
@@ -875,15 +1330,32 @@ gs_window_wayland_init (GSWindowWayland *wayland)
 	gtk_widget_show (priv->vbox);
 	gtk_container_add (GTK_CONTAINER (wayland), priv->vbox);
 
-	priv->drawing_area = gtk_drawing_area_new ();
-	gtk_widget_show (priv->drawing_area);
-	gtk_widget_set_app_paintable (priv->drawing_area, TRUE);
+	/* Saver themes embed into a WleGtkSocket through the embedded
+	 * compositor; fall back to a plain drawing area if the embedded
+	 * compositor is unavailable. */
+	if (gs_wayland_compositor != NULL)
+	{
+		window->priv->drawing_area = wle_gtk_socket_new (gs_wayland_compositor);
+	}
+
+	if (window->priv->drawing_area == NULL)
+	{
+		window->priv->drawing_area = gtk_drawing_area_new ();
+		gtk_widget_set_app_paintable (window->priv->drawing_area, TRUE);
+		g_signal_connect (window->priv->drawing_area,
+		                  "draw",
+		                  G_CALLBACK (on_drawing_area_draw),
+		                  NULL);
+		gs_debug ("Using plain drawing area for saver themes");
+	}
+	else
+	{
+		gs_debug ("Using WleGtkSocket for saver themes");
+	}
+
+	gtk_widget_show (window->priv->drawing_area);
 	gtk_box_pack_start (GTK_BOX (priv->vbox),
-	                    priv->drawing_area, TRUE, TRUE, 0);
-	g_signal_connect (priv->drawing_area,
-	                  "draw",
-	                  G_CALLBACK (on_drawing_area_draw),
-	                  NULL);
+	                    window->priv->drawing_area, TRUE, TRUE, 0);
 }
 
 static void
@@ -902,6 +1374,8 @@ gs_window_wayland_finalize (GObject *object)
 	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	remove_watchdog_timer (window);
+
+	remove_key_events (window);
 
 	if (priv->timer != NULL)
 	{

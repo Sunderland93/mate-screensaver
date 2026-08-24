@@ -582,6 +582,43 @@ gs_job_start (GSJob *job)
 		return FALSE;
 	}
 
+	/* xscreensaver hacks are plain X11 clients; they cannot draw into the
+	   embedded compositor and die immediately with "Can't open display".
+	   Skip only those so we get a clean blank saver instead. Mate's own
+	   plug-based themes are wle-aware and must keep working. */
+	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
+	{
+		char **argv = NULL;
+		char *resolved = NULL;
+		gboolean skip = FALSE;
+
+		if (g_shell_parse_argv (job->priv->command, NULL, &argv, NULL)
+		        && argv[0] != NULL)
+		{
+			if (g_path_is_absolute (argv[0]))
+			{
+				resolved = g_strdup (argv[0]);
+			}
+			else
+			{
+				resolved = g_find_program_in_path (argv[0]);
+			}
+		}
+
+		skip = (resolved != NULL &&
+		        strstr (resolved, G_DIR_SEPARATOR_S "xscreensaver") != NULL);
+
+		g_free (resolved);
+		g_strfreev (argv);
+
+		if (skip)
+		{
+			gs_debug ("Not starting X11 screensaver hack '%s': unsupported on Wayland.",
+			          job->priv->command);
+			return FALSE;
+		}
+	}
+
 	char *final_command = NULL;
 	GSettings *settings = g_settings_new ("org.mate.screensaver");
 	GVariant *args_dict = g_settings_get_value (settings, "screensaver-arguments");

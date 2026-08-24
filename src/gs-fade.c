@@ -900,14 +900,19 @@ gs_fade_init (GSFade *fade)
 	fade->priv->current_alpha = 1.0;
 
 #ifdef ENABLE_X11
-	check_randr_extension (fade);
-	if (!fade->priv->screen_priv.fade_type)
-		check_gamma_extension (fade);
-	gs_debug ("Fade type: %d", fade->priv->screen_priv.fade_type);
-#else
-	fade->priv->screen_priv.fade_type = FADE_TYPE_NONE;
-	gs_debug ("Fade type: none (Wayland)");
+	if (GDK_IS_X11_DISPLAY (gdk_display_get_default ()))
+	{
+		check_randr_extension (fade);
+		if (!fade->priv->screen_priv.fade_type)
+			check_gamma_extension (fade);
+		gs_debug ("Fade type: %d", fade->priv->screen_priv.fade_type);
+	}
+	else
 #endif
+	{
+		fade->priv->screen_priv.fade_type = FADE_TYPE_NONE;
+		gs_debug ("Fade type: none (Wayland)");
+	}
 }
 
 static void

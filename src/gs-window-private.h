@@ -41,11 +41,14 @@ struct GSWindowPrivate
 	guint      obscured : 1;
 	guint      dialog_up : 1;
 
+	/* The widget where saver themes get embedded; on Wayland this is a
+	   WleGtkSocket, on X11 a GtkSocket */
+	GtkWidget *drawing_area;
+
 #ifdef ENABLE_X11
 	GdkRectangle geometry;
 
 	GtkWidget *vbox;
-	GtkWidget *drawing_area;
 	GtkWidget *lock_box;
 	GtkWidget *lock_socket;
 	GtkWidget *keyboard_socket;

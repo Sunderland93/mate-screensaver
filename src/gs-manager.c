@@ -914,8 +914,6 @@ gs_manager_cycle (GSManager *manager)
 	g_return_val_if_fail (manager != NULL, FALSE);
 	g_return_val_if_fail (GS_IS_MANAGER (manager), FALSE);
 
-	gs_debug ("cycling jobs");
-
 	if (! manager->priv->active)
 	{
 		return FALSE;
@@ -930,6 +928,13 @@ gs_manager_cycle (GSManager *manager)
 	{
 		return FALSE;
 	}
+
+	if (manager->priv->saver_mode != GS_MODE_RANDOM)
+	{
+		return FALSE;
+	}
+
+	gs_debug ("cycling jobs");
 
 	manager_cycle_jobs (manager);
 
@@ -980,7 +985,9 @@ gs_manager_set_cycle_timeout (GSManager *manager,
 
 		manager->priv->cycle_timeout = cycle_timeout;
 
-		if (manager->priv->active && (cycle_timeout >= 0))
+		if (manager->priv->active &&
+		    manager->priv->saver_mode == GS_MODE_RANDOM &&
+		    (cycle_timeout >= 0))
 		{
 			glong timeout;
 			glong elapsed = (time (NULL) - manager->priv->activate_time) * 1000;
@@ -1567,7 +1574,8 @@ manager_show_window (GSManager *manager,
 		add_lock_timer (manager, manager->priv->lock_timeout);
 	}
 
-	if (manager->priv->cycle_timeout >= 10000)
+	if (manager->priv->saver_mode == GS_MODE_RANDOM &&
+	    manager->priv->cycle_timeout >= 10000)
 	{
 		remove_cycle_timer (manager);
 		add_cycle_timer (manager, manager->priv->cycle_timeout);

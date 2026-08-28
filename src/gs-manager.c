@@ -239,6 +239,8 @@ manager_request_session_lock (GSManager *manager)
 
 	if (manager->priv->session_lock_manager == NULL)
 	{
+		g_warning ("The compositor does not expose the ext-session-lock-v1 "
+		           "protocol; locking is unavailable on this Wayland compositor");
 		gs_debug ("No session lock manager available");
 		return FALSE;
 	}
@@ -305,6 +307,12 @@ manager_bind_session_lock_manager (GSManager *manager)
 	                          &manager_registry_listener,
 	                          manager);
 	wl_display_roundtrip (wl_display);
+
+	if (manager->priv->session_lock_manager == NULL)
+	{
+		g_warning ("ext-session-lock-v1 protocol unsupported: "
+		           "mate-screensaver will not be able to lock the session");
+	}
 }
 
 struct ext_session_lock_v1 *
@@ -2119,6 +2127,8 @@ gs_manager_activate (GSManager *manager)
 	{
 		if (! manager_request_session_lock (manager))
 		{
+			g_warning ("Failed to request session lock on Wayland: "
+			           "locking requires the ext-session-lock-v1 protocol");
 			gs_debug ("Failed to request session lock on Wayland");
 			return FALSE;
 		}

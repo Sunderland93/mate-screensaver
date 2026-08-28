@@ -992,8 +992,18 @@ static gboolean
 gs_window_real_draw (GtkWidget *widget,
                      cairo_t   *cr)
 {
+	GSWindow        *window = GS_WINDOW (widget);
+	cairo_surface_t *bg_surface = window->priv->background_surface;
+
 	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-	cairo_set_source_rgb (cr, 0, 0, 0);
+	if (bg_surface != NULL)
+	{
+		cairo_set_source_surface (cr, bg_surface, 0, 0);
+	}
+	else
+	{
+		cairo_set_source_rgb (cr, 0, 0, 0);
+	}
 	cairo_paint (cr);
 
 	return FALSE;

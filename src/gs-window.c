@@ -723,7 +723,7 @@ gs_window_clear (GSWindow *window)
 		cr = gdk_cairo_create (gdkwindow);
 		cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
 
-		if (window->priv->lock_enabled && window->priv->background_surface != NULL)
+		if (gs_window_is_dialog_up (window) && window->priv->background_surface != NULL)
 		{
 			cairo_set_source_surface (cr, window->priv->background_surface, 0, 0);
 		}

@@ -706,7 +706,7 @@ gs_window_real_draw (GtkWidget *widget,
 	cairo_surface_t *bg_surface = window->priv->background_surface;
 
 	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-	if (window->priv->lock_enabled && bg_surface != NULL)
+	if (gs_window_is_dialog_up (window) && bg_surface != NULL)
 	{
 		cairo_set_source_surface (cr, bg_surface, 0, 0);
 	}

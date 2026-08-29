@@ -1263,28 +1263,31 @@ gs_manager_init (GSManager *manager)
 	manager->priv->theme_manager = gs_theme_manager_new ();
 
 #ifdef ENABLE_WAYLAND
-	if (global_compositor == NULL)
+	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
 	{
-		global_compositor = wle_gtk_create_embedded_compositor ("mate-screensaver", &error);
 		if (global_compositor == NULL)
 		{
-			g_warning ("Failed to create embedded compositor: %s", error->message);
-			g_error_free (error);
+			global_compositor = wle_gtk_create_embedded_compositor ("mate-screensaver", &error);
+			if (global_compositor == NULL)
+			{
+				g_warning ("Failed to create embedded compositor: %s", error->message);
+				g_error_free (error);
+			}
+			else
+			{
+				wle_embedded_compositor_set_manage_child_processes (global_compositor, TRUE);
+				gs_debug ("Created embedded compositor: %s",
+				          wle_embedded_compositor_get_socket_name (global_compositor));
+			}
 		}
-		else
-		{
-			wle_embedded_compositor_set_manage_child_processes (global_compositor, TRUE);
-			gs_debug ("Created embedded compositor: %s",
-			          wle_embedded_compositor_get_socket_name (global_compositor));
-		}
+		manager->priv->compositor = global_compositor;
+		gs_wayland_compositor = global_compositor;
+		manager->priv->wl_registry = NULL;
+		manager->priv->session_lock_manager = NULL;
+		manager->priv->session_lock = NULL;
+		manager->priv->session_lock_active = FALSE;
+		manager_bind_session_lock_manager (manager);
 	}
-	manager->priv->compositor = global_compositor;
-	gs_wayland_compositor = global_compositor;
-	manager->priv->wl_registry = NULL;
-	manager->priv->session_lock_manager = NULL;
-	manager->priv->session_lock = NULL;
-	manager->priv->session_lock_active = FALSE;
-	manager_bind_session_lock_manager (manager);
 #endif
 
 	manager->priv->bg = mate_bg_new ();

@@ -171,6 +171,8 @@ WAYLAND_PROTOCOLS_DATADIR=""
 WAYLAND_SCANNER=""
 LIBWLEMBED_CFLAGS=""
 LIBWLEMBED_LIBS=""
+LIBWLEMBED_GTK3_CFLAGS=""
+LIBWLEMBED_GTK3_LIBS=""
 GDK_WAYLAND_CFLAGS=""
 GDK_WAYLAND_LIBS=""
 GTK_LAYER_SHELL_CFLAGS=""
@@ -182,6 +184,64 @@ if test "x$enable_wayland" = "xyes"; then
   PKG_CHECK_MODULES(GDK_WAYLAND, [gdk-wayland-3.0 >= $GTK_REQUIRED_VERSION], [have_gdk_wayland=yes], [have_gdk_wayland=no])
   PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
   PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
+
+  LIBWLEMBED_USE_BUNDLED=no
+  if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
+    AC_MSG_NOTICE([system libwlembed not found, using the bundled submodule])
+    LIBWLEMBED_USE_BUNDLED=yes
+
+    if test ! -f "$srcdir/submodules/libwlembed/meson.build"; then
+      AC_MSG_ERROR([bundled libwlembed submodule is missing.
+Please initialize it with: git submodule update --init --recursive])
+    fi
+
+    AC_PATH_TOOL([MESON], [meson], [])
+    AC_PATH_TOOL([NINJA], [ninja], [])
+    if test -z "$MESON"; then
+      AC_MSG_ERROR([meson not found; it is required to build the bundled libwlembed submodule])
+    fi
+    if test -z "$NINJA"; then
+      AC_MSG_ERROR([ninja not found; it is required to build the bundled libwlembed submodule])
+    fi
+
+    LIBWLEMBED_SUBMODULE_SRCDIR="$srcdir/submodules/libwlembed"
+    LIBWLEMBED_SUBMODULE_BUILDDIR="$ac_pwd/submodules/libwlembed/build"
+    LIBWLEMBED_SUBMODULE_PREFIX="$LIBWLEMBED_SUBMODULE_BUILDDIR/prefix"
+
+    AC_MSG_NOTICE([configuring bundled libwlembed...])
+    "$MESON" setup \
+        --prefix="$LIBWLEMBED_SUBMODULE_PREFIX" \
+        --libdir=lib \
+        --wrap-mode=nodownload \
+        -Dintrospection=false \
+        -Dexamples=false \
+        "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+        "$LIBWLEMBED_SUBMODULE_SRCDIR" \
+      || AC_MSG_ERROR([could not configure the bundled libwlembed submodule])
+    "$NINJA" -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+      || AC_MSG_ERROR([could not build the bundled libwlembed submodule])
+    "$MESON" install -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+      || AC_MSG_ERROR([could not install the bundled libwlembed submodule])
+
+    PKG_CONFIG_PATH="$LIBWLEMBED_SUBMODULE_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    export PKG_CONFIG_PATH
+
+    PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
+    PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
+    if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
+      AC_MSG_ERROR([could not find the bundled libwlembed even after building it])
+    fi
+
+    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_PREFIX/lib"
+    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_PREFIX/lib"
+  fi
+
+  AC_SUBST([LIBWLEMBED_USE_BUNDLED])
+  AC_SUBST([LIBWLEMBED_SUBMODULE_BUILDDIR])
+  AC_SUBST([LIBWLEMBED_SUBMODULE_PREFIX])
+  AC_SUBST([MESON])
+  AC_SUBST([NINJA])
+
   PKG_CHECK_MODULES(GTK_LAYER_SHELL, [gtk-layer-shell-0], [have_gtk_layer_shell=yes], [have_gtk_layer_shell=no])
 
   if test "x$have_wayland_protocols" = "xyes"; then
@@ -1109,6 +1169,7 @@ AC_SUBST(GL_LIBS)
 
 AM_CONDITIONAL(ENABLE_X11, test "x$enable_x11" = "xyes")
 AM_CONDITIONAL(ENABLE_WAYLAND, test "x$enable_wayland" = "xyes")
+AM_CONDITIONAL(ENABLE_BUNDLED_LIBWLEMBED, test "x$LIBWLEMBED_USE_BUNDLED" = "xyes")
 
 
 REAL_PREFIX=

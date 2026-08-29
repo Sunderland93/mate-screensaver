@@ -38,6 +38,42 @@ EXTRA_DIST =			\
 DISTCLEANFILES =		\
 	$(NULL)
 
+if ENABLE_BUNDLED_LIBWLEMBED
+
+# Build the bundled libwlembed submodule. Configure already built it so that
+# CFLAGS/LIBS could be resolved; this ensures it is refreshed on every make.
+all-local: libwlembed-build
+
+libwlembed-build:
+	@if test ! -f $(LIBWLEMBED_SUBMODULE_BUILDDIR)/build.ninja; then \
+		echo "Configuring bundled libwlembed..."; \
+		$(MESON) setup \
+			--prefix=$(LIBWLEMBED_SUBMODULE_PREFIX) \
+			--libdir=lib \
+			--wrap-mode=nodownload \
+			-Dintrospection=false \
+			-Dexamples=false \
+			$(LIBWLEMBED_SUBMODULE_BUILDDIR) \
+			$(top_srcdir)/submodules/libwlembed; \
+	else \
+		$(MESON) setup --reconfigure \
+			$(LIBWLEMBED_SUBMODULE_BUILDDIR) \
+			$(top_srcdir)/submodules/libwlembed; \
+	fi
+	$(NINJA) -C $(LIBWLEMBED_SUBMODULE_BUILDDIR)
+	$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR)
+
+# The bundled libwlembed is built at configure time, so it is a configure
+# artifact: 'make clean' leaves it in place and 'make distclean' removes it.
+distclean-local:
+	rm -rf $(LIBWLEMBED_SUBMODULE_BUILDDIR)
+
+# Do not ship the submodule build directory in tarballs.
+dist-hook:
+	rm -rf $(distdir)/submodules/libwlembed/build
+
+endif
+
 MAINTAINERCLEANFILES =		\
 	*~			\
 	compile			\

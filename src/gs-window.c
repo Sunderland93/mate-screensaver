@@ -270,6 +270,12 @@ gs_window_finalize (GObject *object)
 		window->priv->monitor = NULL;
 	}
 
+	if (window->priv->background_surface)
+	{
+		cairo_surface_destroy (window->priv->background_surface);
+		window->priv->background_surface = NULL;
+	}
+
 	G_OBJECT_CLASS (gs_window_parent_class)->finalize (object);
 }
 
@@ -444,6 +450,7 @@ gs_window_init (GSWindow *window)
 	window->priv->obscured = FALSE;
 	window->priv->dialog_up = FALSE;
 	window->priv->drawing_area = NULL;
+	window->priv->background_surface = NULL;
 
 #ifdef ENABLE_X11
 	window->priv->vbox = NULL;
@@ -452,7 +459,6 @@ gs_window_init (GSWindow *window)
 	window->priv->keyboard_socket = NULL;
 	window->priv->info_bar = NULL;
 	window->priv->info_content = NULL;
-	window->priv->background_surface = NULL;
 	window->priv->popup_dialog_idle_id = 0;
 	window->priv->dialog_map_signal_id = 0;
 	window->priv->dialog_unmap_signal_id = 0;
@@ -709,7 +715,6 @@ gs_window_clear (GSWindow *window)
 
 	g_return_if_fail (GS_IS_WINDOW (window));
 
-#ifdef ENABLE_X11
 	gdkwindow = gtk_widget_get_window (GTK_WIDGET (window));
 	if (gdkwindow != NULL)
 	{
@@ -718,7 +723,7 @@ gs_window_clear (GSWindow *window)
 		cr = gdk_cairo_create (gdkwindow);
 		cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
 
-		if (window->priv->background_surface != NULL)
+		if (window->priv->lock_enabled && window->priv->background_surface != NULL)
 		{
 			cairo_set_source_surface (cr, window->priv->background_surface, 0, 0);
 		}
@@ -730,7 +735,6 @@ gs_window_clear (GSWindow *window)
 		cairo_paint (cr);
 		cairo_destroy (cr);
 	}
-#endif
 }
 
 void
@@ -739,7 +743,6 @@ gs_window_set_background_surface (GSWindow        *window,
 {
 	g_return_if_fail (GS_IS_WINDOW (window));
 
-#ifdef ENABLE_X11
 	if (window->priv->background_surface != NULL)
 	{
 		cairo_surface_destroy (window->priv->background_surface);
@@ -753,7 +756,6 @@ gs_window_set_background_surface (GSWindow        *window,
 	}
 
 	gtk_widget_queue_draw (GTK_WIDGET (window));
-#endif
 }
 
 void

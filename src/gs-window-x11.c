@@ -706,7 +706,7 @@ gs_window_real_draw (GtkWidget *widget,
 	cairo_surface_t *bg_surface = window->priv->background_surface;
 
 	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-	if (bg_surface != NULL)
+	if (window->priv->lock_enabled && bg_surface != NULL)
 	{
 		cairo_set_source_surface (cr, bg_surface, 0, 0);
 	}
@@ -2038,13 +2038,8 @@ gs_window_x11_finalize (GObject *object)
 
 	gs_window_dialog_finish (window);
 
-	if (window->priv->background_surface)
-	{
-		cairo_surface_destroy (window->priv->background_surface);
-	}
-
-	/* Note: common fields (logout_command, keyboard_command, status_message)
-	 * are freed by the base class finalize */
+	/* Note: common fields (logout_command, keyboard_command, status_message,
+	 * background_surface) are freed by the base class finalize */
 
 	G_OBJECT_CLASS (gs_window_x11_parent_class)->finalize (object);
 }

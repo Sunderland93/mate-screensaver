@@ -45,6 +45,9 @@ struct GSWindowPrivate
 	   WleGtkSocket, on X11 a GtkSocket */
 	GtkWidget *drawing_area;
 
+	/* Chosen lock screen background, drawn only while the lock is engaged */
+	cairo_surface_t *background_surface;
+
 #ifdef ENABLE_X11
 	GdkRectangle geometry;
 
@@ -54,8 +57,6 @@ struct GSWindowPrivate
 	GtkWidget *keyboard_socket;
 	GtkWidget *info_bar;
 	GtkWidget *info_content;
-
-	cairo_surface_t *background_surface;
 
 	guint      popup_dialog_idle_id;
 

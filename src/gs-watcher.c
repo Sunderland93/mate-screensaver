@@ -163,6 +163,7 @@ _gs_watcher_set_session_idle (GSWatcher *watcher,
                               gboolean   is_idle)
 {
     GSWatcherPrivate *priv;
+    gboolean          handled;
 
     g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
 
@@ -173,8 +174,9 @@ _gs_watcher_set_session_idle (GSWatcher *watcher,
 
     priv->idle = is_idle;
 
+    handled = FALSE;
     g_signal_emit (watcher, signals[GS_WATCHER_SIGNAL_IDLE_CHANGED], 0,
-                   is_idle, NULL);
+                   is_idle, &handled);
 
     return TRUE;
 }
@@ -184,6 +186,7 @@ _gs_watcher_set_session_idle_notice (GSWatcher *watcher,
                                      gboolean   in_effect)
 {
     GSWatcherPrivate *priv;
+    gboolean          handled;
 
     g_return_val_if_fail (GS_IS_WATCHER (watcher), FALSE);
 
@@ -194,8 +197,9 @@ _gs_watcher_set_session_idle_notice (GSWatcher *watcher,
 
     priv->idle_notice = in_effect;
 
+    handled = FALSE;
     g_signal_emit (watcher, signals[GS_WATCHER_SIGNAL_IDLE_NOTICE_CHANGED], 0,
-                   in_effect, NULL);
+                   in_effect, &handled);
 
     return TRUE;
 }

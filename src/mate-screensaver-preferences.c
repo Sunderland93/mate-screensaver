@@ -357,12 +357,9 @@ preview_on_draw (GtkWidget *widget,
                  cairo_t   *cr,
                  gpointer   data)
 {
-	if (job == NULL || !gs_job_is_running (job))
-	{
-		cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-		cairo_set_source_rgb (cr, 0, 0, 0);
-		cairo_paint (cr);
-	}
+	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_paint (cr);
 
 	return FALSE;
 }

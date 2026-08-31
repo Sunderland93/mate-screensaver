@@ -586,6 +586,7 @@ gs_job_start (GSJob *job)
 	   embedded compositor and die immediately with "Can't open display".
 	   Skip only those so we get a clean blank saver instead. Mate's own
 	   plug-based themes are wle-aware and must keep working. */
+#ifdef ENABLE_WAYLAND
 	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
 	{
 		char **argv = NULL;
@@ -618,6 +619,7 @@ gs_job_start (GSJob *job)
 			return FALSE;
 		}
 	}
+#endif
 
 	char *final_command = NULL;
 	GSettings *settings = g_settings_new ("org.mate.screensaver");

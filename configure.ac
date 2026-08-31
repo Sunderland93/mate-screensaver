@@ -190,9 +190,11 @@ if test "x$enable_wayland" = "xyes"; then
     AC_MSG_NOTICE([system libwlembed not found, using the bundled submodule])
     LIBWLEMBED_USE_BUNDLED=yes
 
-    if test ! -f "$srcdir/submodules/libwlembed/meson.build"; then
-      AC_MSG_ERROR([bundled libwlembed submodule is missing.
-Please initialize it with: git submodule update --init --recursive])
+    if test ! -f "$srcdir/submodules/libwlembed/meson.build" \
+        || test ! -d "$srcdir/submodules/libwlembed/protocol/wlr-protocols"; then
+      AC_MSG_ERROR([bundled libwlembed submodule is incomplete.
+Please initialize it (including its nested submodules) with:
+  git submodule update --init --recursive])
     fi
 
     AC_PATH_TOOL([MESON], [meson], [])
@@ -206,12 +208,13 @@ Please initialize it with: git submodule update --init --recursive])
 
     LIBWLEMBED_SUBMODULE_SRCDIR="$srcdir/submodules/libwlembed"
     LIBWLEMBED_SUBMODULE_BUILDDIR="$ac_pwd/submodules/libwlembed/build"
-    LIBWLEMBED_SUBMODULE_PREFIX="$LIBWLEMBED_SUBMODULE_BUILDDIR/prefix"
+    LIBWLEMBED_SUBMODULE_STAGE="$LIBWLEMBED_SUBMODULE_BUILDDIR/stage"
 
     AC_MSG_NOTICE([configuring bundled libwlembed...])
     "$MESON" setup \
-        --prefix="$LIBWLEMBED_SUBMODULE_PREFIX" \
-        --libdir=lib \
+        --prefix="$prefix" \
+        --libdir="$libdir" \
+        --buildtype=release \
         --wrap-mode=nodownload \
         -Dintrospection=false \
         -Dexamples=false \
@@ -220,10 +223,11 @@ Please initialize it with: git submodule update --init --recursive])
       || AC_MSG_ERROR([could not configure the bundled libwlembed submodule])
     "$NINJA" -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
       || AC_MSG_ERROR([could not build the bundled libwlembed submodule])
-    "$MESON" install -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
-      || AC_MSG_ERROR([could not install the bundled libwlembed submodule])
+    DESTDIR="$LIBWLEMBED_SUBMODULE_STAGE" \
+      "$MESON" install -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" --no-rebuild \
+      || AC_MSG_ERROR([could not stage the bundled libwlembed submodule])
 
-    PKG_CONFIG_PATH="$LIBWLEMBED_SUBMODULE_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    PKG_CONFIG_PATH="$LIBWLEMBED_SUBMODULE_STAGE/$libdir/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
     export PKG_CONFIG_PATH
 
     PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
@@ -232,13 +236,13 @@ Please initialize it with: git submodule update --init --recursive])
       AC_MSG_ERROR([could not find the bundled libwlembed even after building it])
     fi
 
-    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_PREFIX/lib"
-    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_PREFIX/lib"
+    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$libdir"
+    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$libdir"
   fi
 
   AC_SUBST([LIBWLEMBED_USE_BUNDLED])
   AC_SUBST([LIBWLEMBED_SUBMODULE_BUILDDIR])
-  AC_SUBST([LIBWLEMBED_SUBMODULE_PREFIX])
+  AC_SUBST([LIBWLEMBED_SUBMODULE_STAGE])
   AC_SUBST([MESON])
   AC_SUBST([NINJA])
 

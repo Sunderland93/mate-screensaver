@@ -397,6 +397,7 @@ preview_get_socket (GtkWidget *preview_area)
 	return preview_area;
 }
 
+#ifdef ENABLE_WAYLAND
 static gboolean
 preview_enter_notify_cb (GtkWidget *widget,
                          GdkEventCrossing *event,
@@ -434,6 +435,7 @@ preview_enter_notify_cb (GtkWidget *widget,
 
 	return FALSE;
 }
+#endif
 
 static void
 savers_treeview_realize_cb (GtkWidget *widget,

@@ -2386,9 +2386,10 @@ GtkWidget *
 gs_lock_plug_new (void)
 {
 	GtkWidget  *result;
-	const char *embedding_token = NULL;
 
 #ifdef ENABLE_WAYLAND
+	const char *embedding_token;
+
 	embedding_token = g_getenv ("XSCREENSAVER_WINDOW");
 
 	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))

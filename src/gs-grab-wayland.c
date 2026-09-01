@@ -153,7 +153,6 @@ wayland_grab_grab_offscreen (GSGrab    *grab,
                              gboolean   no_pointer_grab,
                              gboolean   hide_cursor)
 {
-	GSGrabWaylandPrivate *priv = GS_GRAB_WAYLAND_GET_PRIVATE (grab);
 	GtkWidget *invisible;
 	GdkWindow  *window;
 	GdkDisplay *display;

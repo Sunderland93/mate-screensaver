@@ -916,11 +916,7 @@ gs_window_wayland_request_unlock (GSWindow *window)
 static void
 gs_window_wayland_cancel_unlock_request (GSWindow *window)
 {
-	GSWindowWaylandPrivate *priv;
-
 	g_return_if_fail (GS_IS_WINDOW_WAYLAND (window));
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	destroy_lock_surface (window);
 
@@ -972,9 +968,6 @@ static void
 gs_window_real_hide (GtkWidget *widget)
 {
 	GSWindow                *window = GS_WINDOW (widget);
-	GSWindowWaylandPrivate  *priv;
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	remove_watchdog_timer (window);
 
@@ -1050,10 +1043,6 @@ gs_window_wayland_real_destroy (GSWindow *window)
 static void
 gs_window_real_unrealize (GtkWidget *widget)
 {
-	GSWindowWaylandPrivate *priv;
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (widget);
-
 	remove_watchdog_timer (GS_WINDOW (widget));
 
 	destroy_lock_surface (GS_WINDOW (widget));
@@ -1182,9 +1171,6 @@ gs_window_real_key_press_event (GtkWidget   *widget,
                                 GdkEventKey *event)
 {
 	GSWindow               *window = GS_WINDOW (widget);
-	GSWindowWaylandPrivate *priv;
-
-	priv = GS_WINDOW_WAYLAND_GET_PRIVATE (window);
 
 	/* Ignore brightness keys: adjusting the screen brightness while
 	 * idle should not bring up the unlock dialog */

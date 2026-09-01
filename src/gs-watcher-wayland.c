@@ -91,7 +91,7 @@ on_activation_resumed (void                            *data,
 	_gs_watcher_set_session_idle_notice (watcher, FALSE);
 }
 
-static const struct ext_idle_notification_v1_listener activation_listener =
+static struct ext_idle_notification_v1_listener activation_listener =
 {
 	.idled = on_activation_idled,
 	.resumed = on_activation_resumed,
@@ -122,7 +122,7 @@ on_lock_notice_resumed (void                            *data,
 	_gs_watcher_set_session_idle_notice (watcher, FALSE);
 }
 
-static const struct ext_idle_notification_v1_listener lock_notice_listener =
+static struct ext_idle_notification_v1_listener lock_notice_listener =
 {
 	.idled = on_lock_notice_idled,
 	.resumed = on_lock_notice_resumed,

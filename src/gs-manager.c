@@ -671,10 +671,12 @@ gs_manager_set_lock_active (GSManager *manager,
 
 		/* an explicit lock request wants the password prompt right away;
 		   idle activation does not (saver keeps running until input) */
+#ifdef ENABLE_WAYLAND
 		if (lock_active)
 		{
 			manager->priv->raise_dialog_on_lock = TRUE;
 		}
+#endif
 
 		for (l = manager->priv->windows; l; l = l->next)
 		{
@@ -1254,8 +1256,6 @@ on_bg_changed (MateBG   *bg,
 static void
 gs_manager_init (GSManager *manager)
 {
-	GError *error = NULL;
-
 	manager->priv = gs_manager_get_instance_private (manager);
 
 	manager->priv->fade = gs_fade_new ();
@@ -1265,6 +1265,8 @@ gs_manager_init (GSManager *manager)
 #ifdef ENABLE_WAYLAND
 	if (GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
 	{
+		GError *error = NULL;
+
 		if (global_compositor == NULL)
 		{
 			global_compositor = wle_gtk_create_embedded_compositor ("mate-screensaver", &error);
@@ -1870,7 +1872,9 @@ on_display_monitor_added (GdkDisplay *display,
 #ifdef ENABLE_X11
 	/* and put unlock dialog up whereever it's supposed to be.
 	   On Wayland user input brings it up instead. */
+#ifdef ENABLE_WAYLAND
 	if (! GDK_IS_WAYLAND_DISPLAY (gdk_display_get_default ()))
+#endif
 	{
 		gs_manager_request_unlock (manager);
 	}

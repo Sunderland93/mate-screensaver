@@ -187,7 +187,6 @@ x11_grab_reset (GSGrab *grab)
 static void
 x11_grab_release (GSGrab *grab, gboolean flush)
 {
-	GSGrabX11Private *priv = GRAB_X11_GET_PRIVATE (grab);
 	GdkDisplay *display;
 	GdkSeat    *seat;
 
@@ -407,7 +406,6 @@ static void
 gs_grab_x11_class_init (GSGrabX11Class *klass)
 {
 	GSGrabClass *grab_class = GS_GRAB_CLASS (klass);
-	GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
 	grab_class->release = x11_grab_release;
 	grab_class->grab_window = x11_grab_grab_window;

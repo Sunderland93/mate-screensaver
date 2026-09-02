@@ -254,6 +254,17 @@ ext-session-lock-client.h: $(WAYLAND_PROTOCOLS_DATADIR)/staging/ext-session-lock
 	$(AM_V_GEN) $(WAYLAND_SCANNER) client-header $< $@
 endif
 
+if ENABLE_BUNDLED_LIBWLEMBED
+# Any app built here needs the staged libwlembed headers/libraries, so this is
+# the sole driver of the bundled libwlembed build: listed in BUILT_SOURCES so
+# "all: $(BUILT_SOURCES)" builds it before the programs. savers only waits for
+# the resulting stamp (order-only) and does not re-build it.
+BUILT_SOURCES += $(top_builddir)/libwlembed.stamp
+
+$(top_builddir)/libwlembed.stamp:
+	$(am__cd) $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) libwlembed.stamp
+endif
+
 if ENABLE_X11
 X11_SOURCES =			\
 	gs-watcher-x11.c	\

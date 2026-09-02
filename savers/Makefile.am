@@ -69,6 +69,14 @@ gs-theme-engine-marshal.c: gs-theme-engine-marshal.list
 gs-theme-engine-marshal.h: gs-theme-engine-marshal.list
 	@GLIB_GENMARSHAL@ $< --prefix=gs_theme_engine_marshal --header > $@
 
+if ENABLE_BUNDLED_LIBWLEMBED
+# The bundled libwlembed is built and staged by the src subdirectory (which
+# comes first in SUBDIRS, so it always runs before savers). We only wait for
+# the resulting stamp via an order-only prerequisite: it ensures the stamp
+# exists before the savers are built, but never re-triggers a libwlembed build.
+saver_PROGRAMS: | $(top_builddir)/libwlembed.stamp
+endif
+
 noinst_LIBRARIES =			\
 	libgs-theme-engine.a
 

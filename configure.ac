@@ -210,10 +210,36 @@ Please initialize it (including its nested submodules) with:
     LIBWLEMBED_SUBMODULE_BUILDDIR="$ac_pwd/submodules/libwlembed/build"
     LIBWLEMBED_SUBMODULE_STAGE="$LIBWLEMBED_SUBMODULE_BUILDDIR/stage"
 
+    dnl At this point in configure, prefix and libdir still hold their
+    dnl literal placeholders ("NONE" / "${exec_prefix}/lib") because autotools
+    dnl only resolves them much later. Meson requires absolute paths, so
+    dnl resolve them here to values consistent with what automake would use.
+    LIBWLEMBED_MESON_PREFIX="$ac_default_prefix"
+    if test "x$prefix" != "xNONE"; then
+      LIBWLEMBED_MESON_PREFIX="$prefix"
+    fi
+
+    LIBWLEMBED_MESON_EXEC_PREFIX="$LIBWLEMBED_MESON_PREFIX"
+    if test "x$exec_prefix" != "xNONE"; then
+      LIBWLEMBED_MESON_EXEC_PREFIX="$exec_prefix"
+    fi
+
+    LIBWLEMBED_MESON_LIBDIR="$libdir"
+    case "$LIBWLEMBED_MESON_LIBDIR" in
+      *exec_prefix*)
+        LIBWLEMBED_MESON_LIBDIR="$LIBWLEMBED_MESON_EXEC_PREFIX/lib"
+        ;;
+    esac
+
     AC_MSG_NOTICE([configuring bundled libwlembed...])
+    if test -d "$LIBWLEMBED_SUBMODULE_BUILDDIR"; then
+      rm -rf "$LIBWLEMBED_SUBMODULE_BUILDDIR"
+    fi
+    dnl Only set up the meson build tree here; the actual compilation is
+    dnl deferred to "make" (see the libwlembed-build target in Makefile.am).
     "$MESON" setup \
-        --prefix="$prefix" \
-        --libdir="$libdir" \
+        --prefix="$LIBWLEMBED_MESON_PREFIX" \
+        --libdir="$LIBWLEMBED_MESON_LIBDIR" \
         --buildtype=release \
         --wrap-mode=nodownload \
         -Dintrospection=false \
@@ -221,23 +247,55 @@ Please initialize it (including its nested submodules) with:
         "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
         "$LIBWLEMBED_SUBMODULE_SRCDIR" \
       || AC_MSG_ERROR([could not configure the bundled libwlembed submodule])
-    "$NINJA" -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
-      || AC_MSG_ERROR([could not build the bundled libwlembed submodule])
-    DESTDIR="$LIBWLEMBED_SUBMODULE_STAGE" \
-      "$MESON" install -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" --no-rebuild \
-      || AC_MSG_ERROR([could not stage the bundled libwlembed submodule])
 
-    PKG_CONFIG_PATH="$LIBWLEMBED_SUBMODULE_STAGE/$libdir/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    dnl The staged headers/libs do not exist yet (they are produced at
+    dnl "make" time), so synthesize the pkg-config files that meson would
+    dnl otherwise generate, and resolve the flags through pkg-config as usual.
+    dnl The prefix below deliberately points at the *stage* directory so that
+    dnl the emitted -I/-L flags reference the staged headers and libraries.
+    LIBWLEMBED_MESON_STAGED_PREFIX="$LIBWLEMBED_SUBMODULE_STAGE$LIBWLEMBED_MESON_PREFIX"
+    LIBWLEMBED_MESON_PKGCONFIGDIR="$LIBWLEMBED_SUBMODULE_BUILDDIR/pkgconfig"
+    mkdir -p "$LIBWLEMBED_MESON_PKGCONFIGDIR"
+    cat > "$LIBWLEMBED_MESON_PKGCONFIGDIR/libwlembed-0.pc" <<EOF
+prefix=$LIBWLEMBED_MESON_STAGED_PREFIX
+includedir=\${prefix}/include
+libdir=\${prefix}/lib
+
+Name: libwlembed-0
+Description: Library for creating an embedded/nested Wayland compositor
+Version: 0.0.0-dev
+Requires: glib-2.0 >= 2.72, gobject-2.0 >= 2.72
+Requires.private: gio-2.0 >= 2.72, wayland-client >= 1.20, wayland-server >= 1.20, xkbcommon
+Libs: -L\${libdir} -lwlembed-0
+Libs.private: -lm -lrt
+Cflags: -I\${includedir}/libwlembed-0
+EOF
+    cat > "$LIBWLEMBED_MESON_PKGCONFIGDIR/libwlembed-gtk3-0.pc" <<EOF
+prefix=$LIBWLEMBED_MESON_STAGED_PREFIX
+includedir=\${prefix}/include
+libdir=\${prefix}/lib
+
+Name: libwlembed-gtk3-0
+Description: Library for creating an embedded/nested Wayland compositor (GTK3 widgets)
+Version: 0.0.0-dev
+Requires: gtk+-3.0 >= 3.24, libwlembed-0
+Requires.private: glib-2.0 >= 2.72, wayland-server >= 1.20, gobject-2.0 >= 2.72, gtk-layer-shell-0 >= 0.7.0, wayland-client >= 1.20
+Libs: -L\${libdir} -lwlembed-gtk3-0
+Cflags: -I\${includedir}/libwlembed-0
+EOF
+
+    PKG_CONFIG_PATH="$LIBWLEMBED_MESON_PKGCONFIGDIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
     export PKG_CONFIG_PATH
 
     PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
     PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
     if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
-      AC_MSG_ERROR([could not find the bundled libwlembed even after building it])
+      AC_MSG_ERROR([could not find the bundled libwlembed even after generating its pkg-config files])
     fi
 
-    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$libdir"
-    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$libdir"
+    dnl Ensure the final binaries can locate the staged libraries at runtime.
+    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
+    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
   fi
 
   AC_SUBST([LIBWLEMBED_USE_BUNDLED])

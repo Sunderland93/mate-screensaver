@@ -163,6 +163,9 @@ endif
 test_watcher_SOURCES = $(X11_TEST_WATCHER_SOURCES) $(WAYLAND_TEST_WATCHER_SOURCES)
 test_window_SOURCES = $(X11_TEST_WINDOW_SOURCES) $(WAYLAND_TEST_WINDOW_SOURCES)
 
+nodist_test_watcher_SOURCES = $(WAYLAND_GEN_SOURCES)
+nodist_test_window_SOURCES = $(WAYLAND_GEN_SOURCES)
+
 test_watcher_LDADD =			\
 	$(MATE_SCREENSAVER_LIBS)	\
 	$(X11_LDADD)			\
@@ -302,13 +305,11 @@ WAYLAND_LDADD =			\
 
 WAYLAND_TEST_WATCHER_SOURCES =	\
 	gs-watcher-wayland.c	\
-	$(WAYLAND_GEN_SOURCES)	\
 	$(NULL)
 
 WAYLAND_TEST_WINDOW_SOURCES =	\
 	gs-window-wayland.c	\
 	gs-grab-wayland.c	\
-	$(WAYLAND_GEN_SOURCES)	\
 	$(NULL)
 else
 WAYLAND_SOURCES = $(NULL)
@@ -349,8 +350,18 @@ mate_screensaver_SOURCES =	\
 	gs-fade.h		\
 	$(X11_SOURCES)		\
 	$(WAYLAND_SOURCES)	\
-	$(BUILT_SOURCES)	\
 	$(NULL)
+
+nodist_mate_screensaver_SOURCES =	\
+	gs-marshal.c		\
+	$(NULL)
+
+if ENABLE_WAYLAND
+nodist_mate_screensaver_SOURCES +=	\
+	ext-idle-notify-client.c	\
+	ext-session-lock-client.c	\
+	$(NULL)
+endif
 
 if ENABLE_X11
 mate_screensaver_gl_helper_LDADD =	\

@@ -281,7 +281,7 @@ Version: 0.0.0-dev
 Requires: gtk+-3.0 >= 3.24, libwlembed-0
 Requires.private: glib-2.0 >= 2.72, wayland-server >= 1.20, gobject-2.0 >= 2.72, gtk-layer-shell-0 >= 0.7.0, wayland-client >= 1.20
 Libs: -L\${libdir} -lwlembed-gtk3-0
-Cflags: -I\${includedir}/libwlembed-0
+Cflags: -I\${includedir}
 EOF
 
     PKG_CONFIG_PATH="$LIBWLEMBED_MESON_PKGCONFIGDIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"

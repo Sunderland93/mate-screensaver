@@ -71,9 +71,9 @@ libwlembed-build:
 			$(top_srcdir)/submodules/libwlembed; \
 	fi
 	$(NINJA) -C $(LIBWLEMBED_SUBMODULE_BUILDDIR)
-	@if test ! -f "$(LIBWLEMBED_SUBMODULE_STAGE)/usr/local/lib/libwlembed-0.so.0" -o \
+	@if test ! -f "$(LIBWLEMBED_SUBMODULE_STAGE)$(libdir)/libwlembed-0.so.0" -o \
 		"$(LIBWLEMBED_SUBMODULE_BUILDDIR)/libwlembed/libwlembed-0.so.0.0.0" -nt \
-			"$(LIBWLEMBED_SUBMODULE_STAGE)/usr/local/lib/libwlembed-0.so.0"; then \
+			"$(LIBWLEMBED_SUBMODULE_STAGE)$(libdir)/libwlembed-0.so.0"; then \
 		rm -rf $(LIBWLEMBED_SUBMODULE_STAGE); \
 		DESTDIR="$(LIBWLEMBED_SUBMODULE_STAGE)" \
 			$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) --no-rebuild; \

@@ -254,12 +254,15 @@ Please initialize it (including its nested submodules) with:
     dnl The prefix below deliberately points at the *stage* directory so that
     dnl the emitted -I/-L flags reference the staged headers and libraries.
     LIBWLEMBED_MESON_STAGED_PREFIX="$LIBWLEMBED_SUBMODULE_STAGE$LIBWLEMBED_MESON_PREFIX"
+    dnl Compute the libdir relative to prefix so the .pc files resolve it
+    dnl correctly even on multiarch systems (e.g. /usr/lib/x86_64-linux-gnu).
+    LIBWLEMBED_MESON_REL_LIBDIR="${LIBWLEMBED_MESON_LIBDIR#${LIBWLEMBED_MESON_PREFIX}}"
     LIBWLEMBED_MESON_PKGCONFIGDIR="$LIBWLEMBED_SUBMODULE_BUILDDIR/pkgconfig"
     mkdir -p "$LIBWLEMBED_MESON_PKGCONFIGDIR"
     cat > "$LIBWLEMBED_MESON_PKGCONFIGDIR/libwlembed-0.pc" <<EOF
 prefix=$LIBWLEMBED_MESON_STAGED_PREFIX
 includedir=\${prefix}/include
-libdir=\${prefix}/lib
+libdir=\${prefix}$LIBWLEMBED_MESON_REL_LIBDIR
 
 Name: libwlembed-0
 Description: Library for creating an embedded/nested Wayland compositor
@@ -273,7 +276,7 @@ EOF
     cat > "$LIBWLEMBED_MESON_PKGCONFIGDIR/libwlembed-gtk3-0.pc" <<EOF
 prefix=$LIBWLEMBED_MESON_STAGED_PREFIX
 includedir=\${prefix}/include
-libdir=\${prefix}/lib
+libdir=\${prefix}$LIBWLEMBED_MESON_REL_LIBDIR
 
 Name: libwlembed-gtk3-0
 Description: Library for creating an embedded/nested Wayland compositor (GTK3 widgets)

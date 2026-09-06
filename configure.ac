@@ -50,6 +50,28 @@ AC_ARG_ENABLE(wayland,
   [enable_wayland=$enableval], [enable_wayland=no])
 
 dnl
+dnl Select between the bundled libwlembed submodule (default) and a
+dnl system-installed one. Bundled is always used unless the user opts into a
+dnl system installation via --with-system-libwlembed.
+dnl
+AC_ARG_WITH(system-libwlembed,
+  AS_HELP_STRING([--with-system-libwlembed],
+                 [Use a system-installed libwlembed instead of the bundled submodule (default: no)]),
+  [use_system_libwlembed=$withval], [use_system_libwlembed=no])
+
+case "$use_system_libwlembed" in
+  yes|true|1)
+    use_system_libwlembed=yes
+    ;;
+  no|false|0|"")
+    use_system_libwlembed=no
+    ;;
+  *)
+    AC_MSG_ERROR([Invalid value for --with-system-libwlembed: '$use_system_libwlembed' (expected true/false, yes/no or 1/0)])
+    ;;
+esac
+
+dnl
 dnl Both X11 and Wayland can be enabled simultaneously for runtime session switching
 dnl
 
@@ -183,11 +205,17 @@ if test "x$enable_wayland" = "xyes"; then
   PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.31], [have_wayland_protocols=yes], [have_wayland_protocols=no])
   PKG_CHECK_MODULES(GDK_WAYLAND, [gdk-wayland-3.0 >= $GTK_REQUIRED_VERSION], [have_gdk_wayland=yes], [have_gdk_wayland=no])
   PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
-  PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
 
   LIBWLEMBED_USE_BUNDLED=no
-  if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
-    AC_MSG_NOTICE([system libwlembed not found, using the bundled submodule])
+  if test "x$use_system_libwlembed" = "xyes"; then
+    dnl User explicitly asked for a system libwlembed; require it.
+    PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
+    if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
+      AC_MSG_ERROR([--with-system-libwlembed=true requested but libwlembed is not installed on the system])
+    fi
+  else
+    dnl Default: always use the bundled submodule, regardless of any system install.
+    AC_MSG_NOTICE([using the bundled libwlembed submodule])
     LIBWLEMBED_USE_BUNDLED=yes
 
     if test ! -f "$srcdir/submodules/libwlembed/meson.build" \
@@ -1376,6 +1404,7 @@ Configure summary:
 
     X11 support ..................: ${enable_x11}
     Wayland support ..............: ${enable_wayland}
+    Use system libwlembed ........: ${use_system_libwlembed}
 
     Screen locking enabled .......: ${enable_locking}
     Show keyboard indicator ......: ${with_kbd_layout_indicator}

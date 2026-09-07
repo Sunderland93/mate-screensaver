@@ -129,7 +129,15 @@ gs_watcher_class_init (GSWatcherClass *klass)
 static void
 gs_watcher_init (GSWatcher *watcher)
 {
+    _gs_watcher_init_priv (watcher);
+}
+
+void
+_gs_watcher_init_priv (GSWatcher *watcher)
+{
     GSWatcherPrivate *priv;
+
+    g_return_if_fail (GS_IS_WATCHER (watcher));
 
     priv = GS_WATCHER_GET_PRIVATE (watcher);
     watcher->priv = priv;

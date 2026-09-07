@@ -416,7 +416,11 @@ gs_watcher_x11_class_init (GSWatcherX11Class *klass)
 static void
 gs_watcher_x11_init (GSWatcherX11 *x11)
 {
-	GSWatcherX11Private *priv = WATCHER_X11_GET_PRIVATE (x11);
+	GSWatcherX11Private *priv;
+
+	_gs_watcher_init_priv (GS_WATCHER (x11));
+
+	priv = WATCHER_X11_GET_PRIVATE (x11);
 
 	priv->presence_proxy = NULL;
 	priv->watchdog_timer_id = 0;

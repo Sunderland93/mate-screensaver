@@ -333,6 +333,8 @@ gs_watcher_wayland_init (GSWatcherWayland *wayland)
 {
 	GSWatcherWaylandPrivate *priv;
 
+	_gs_watcher_init_priv (GS_WATCHER (wayland));
+
 	priv = GS_WATCHER_WAYLAND_GET_PRIVATE (wayland);
 
 	priv->idle_notification = NULL;

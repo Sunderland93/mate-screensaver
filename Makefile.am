@@ -79,7 +79,7 @@ libwlembed-build:
 			$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) --no-rebuild; \
 	fi
 
-install-exec-hook:
+install-exec-hook: libwlembed-build
 	$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) \
 		--destdir "$(DESTDIR)" --no-rebuild
 

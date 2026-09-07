@@ -43,5 +43,6 @@ gboolean _gs_watcher_set_session_idle     (GSWatcher *watcher,
                                            gboolean   is_idle);
 gboolean _gs_watcher_set_session_idle_notice (GSWatcher *watcher,
                                               gboolean   in_effect);
+void     _gs_watcher_init_priv            (GSWatcher *watcher);
 
 #endif /* __GS_WATCHER_PRIVATE_H */

@@ -389,6 +389,9 @@ static void on_watcher_status_message_changed(GSWatcher* watcher, GParamSpec* ps
 
 static void disconnect_watcher_signals(GSMonitor *monitor)
 {
+	if (monitor->priv->watcher == NULL)
+		return;
+
 	g_signal_handlers_disconnect_by_func(monitor->priv->watcher, watcher_idle_cb, monitor);
 	g_signal_handlers_disconnect_by_func(monitor->priv->watcher, watcher_idle_notice_cb, monitor);
 	g_signal_handlers_disconnect_by_func(monitor->priv->watcher, on_watcher_status_message_changed, monitor);
@@ -396,6 +399,9 @@ static void disconnect_watcher_signals(GSMonitor *monitor)
 
 static void connect_watcher_signals(GSMonitor *monitor)
 {
+	if (monitor->priv->watcher == NULL)
+		return;
+
 	g_signal_connect(monitor->priv->watcher, "idle-changed", G_CALLBACK(watcher_idle_cb), monitor);
 	g_signal_connect(monitor->priv->watcher, "idle-notice-changed", G_CALLBACK(watcher_idle_notice_cb), monitor);
 	g_signal_connect(monitor->priv->watcher, "notify::status-message", G_CALLBACK(on_watcher_status_message_changed), monitor);
@@ -444,6 +450,13 @@ static void gs_monitor_init(GSMonitor* monitor)
 	monitor->priv->manager = gs_manager_new();
 	connect_manager_signals(monitor);
 
+	if (monitor->priv->watcher == NULL)
+	{
+		g_critical("Unable to create an idle watcher for the current display "
+			   "backend; the screensaver will not run.");
+		return;
+	}
+
 	_gs_monitor_update_from_prefs(monitor, monitor->priv->prefs);
 }
 
@@ -465,7 +478,8 @@ static void gs_monitor_finalize(GObject* object)
 
 	g_object_unref(monitor->priv->fade);
 	g_object_unref(monitor->priv->grab);
-	g_object_unref(monitor->priv->watcher);
+	if (monitor->priv->watcher)
+		g_object_unref(monitor->priv->watcher);
 	g_object_unref(monitor->priv->listener);
 	g_object_unref(monitor->priv->manager);
 	g_object_unref(monitor->priv->prefs);
@@ -478,6 +492,12 @@ GSMonitor* gs_monitor_new(void)
 	GSMonitor* monitor;
 
 	monitor = g_object_new(GS_TYPE_MONITOR, NULL);
+
+	if (monitor->priv->watcher == NULL)
+	{
+		g_object_unref(monitor);
+		return NULL;
+	}
 
 	return GS_MONITOR(monitor);
 }

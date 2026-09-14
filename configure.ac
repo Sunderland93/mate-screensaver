@@ -325,8 +325,12 @@ EOF
     fi
 
     dnl Ensure the final binaries can locate the staged libraries at runtime.
-    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
-    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
+    dnl Use DT_RPATH (--disable-new-dtags) so the rpath also applies to
+    dnl transitively loaded dependencies: mate-screensaver-dialog links
+    dnl libwlembed-gtk3-0 directly but only pulls libwlembed-0 in
+    dnl transitively, and DT_RUNPATH is not inherited by other objects.
+    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
+    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
   fi
 
   AC_SUBST([LIBWLEMBED_USE_BUNDLED])

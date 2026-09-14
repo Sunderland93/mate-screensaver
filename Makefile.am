@@ -40,11 +40,15 @@ DISTCLEANFILES =		\
 
 if ENABLE_BUNDLED_LIBWLEMBED
 
-# The stamp marks that libwlembed has been built and staged. It is created by
-# the src subdirectory (the sole driver, via its BUILT_SOURCES hook); savers
-# only waits for it order-only. This target exists so nondiscoverable re-entry
-# (e.g. "make libwlembed.stamp") still produces it.
-libwlembed.stamp: libwlembed-build
+WLEMBED_STAMP_LIB0 = $(LIBWLEMBED_SUBMODULE_BUILDDIR)/libwlembed/libwlembed-0.so.0.0.0
+WLEMBED_STAMP_DEPS = $(shell find $(top_srcdir)/submodules/libwlembed/libwlembed \
+	$(top_srcdir)/submodules/libwlembed/libwlembed-gtk3 \
+	\( -name '*.c' -o -name '*.h' -o -name 'meson.build' \))
+
+$(WLEMBED_STAMP_LIB0): $(WLEMBED_STAMP_DEPS)
+	@$(MAKE) $(AM_MAKEFLAGS) libwlembed-build
+
+libwlembed.stamp: $(WLEMBED_STAMP_LIB0)
 	@touch $@
 
 libwlembed-build:
@@ -79,7 +83,7 @@ libwlembed-build:
 			$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) --no-rebuild; \
 	fi
 
-install-exec-hook: libwlembed-build
+install-exec-hook: $(top_builddir)/libwlembed.stamp
 	$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) \
 		--destdir "$(DESTDIR)" --no-rebuild
 
@@ -120,6 +124,6 @@ ChangeLog:
 
 dist: ChangeLog
 
-.PHONY: ChangeLog
+.PHONY: ChangeLog libwlembed-build
 
 -include $(top_srcdir)/git.mk

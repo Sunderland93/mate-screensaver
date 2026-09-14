@@ -135,6 +135,7 @@ X11_TEST_WATCHER_SOURCES =		\
 	gs-watcher.c			\
 	gs-watcher.h			\
 	gs-watcher-private.h		\
+	gs-watcher-x11.h		\
 	gs-watcher-x11.c		\
 	gs-marshal.c 			\
 	gs-marshal.h			\

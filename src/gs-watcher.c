@@ -309,6 +309,23 @@ gs_watcher_new (void)
     }
 #endif
 
+    g_critical ("No idle watcher backend matches the current display; "
+                "the screensaver will not run. "
+#ifdef ENABLE_WAYLAND
+                "ENABLE_WAYLAND is defined, "
+#else
+                "ENABLE_WAYLAND is not defined, "
+#endif
+#ifdef ENABLE_X11
+                "ENABLE_X11 is defined, "
+#else
+                "ENABLE_X11 is not defined, "
+#endif
+                "and GDK reports a \'%s\' display.",
+                gdk_display_get_default () != NULL
+                ? gdk_display_get_name (gdk_display_get_default ())
+                : "(no default display)");
+
     return NULL;
 }
 

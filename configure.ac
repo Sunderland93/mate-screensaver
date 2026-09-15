@@ -260,27 +260,50 @@ Please initialize it (including its nested submodules) with:
     esac
 
     AC_MSG_NOTICE([configuring bundled libwlembed...])
-    if test -d "$LIBWLEMBED_SUBMODULE_BUILDDIR"; then
-      rm -rf "$LIBWLEMBED_SUBMODULE_BUILDDIR"
+    if test -f "$LIBWLEMBED_SUBMODULE_BUILDDIR/build.ninja"; then
+      dnl Reuse the existing build tree so a re-configure does not trigger a
+      dnl full rebuild of the submodule.
+      "$MESON" setup --reconfigure \
+          --prefix="$LIBWLEMBED_MESON_PREFIX" \
+          --libdir="$LIBWLEMBED_MESON_LIBDIR" \
+          --buildtype=release \
+          --wrap-mode=nodownload \
+          -Dintrospection=false \
+          -Dexamples=false \
+          "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+          "$LIBWLEMBED_SUBMODULE_SRCDIR" \
+        || AC_MSG_ERROR([could not (re)configure the bundled libwlembed submodule])
+    else
+      "$MESON" setup \
+          --prefix="$LIBWLEMBED_MESON_PREFIX" \
+          --libdir="$LIBWLEMBED_MESON_LIBDIR" \
+          --buildtype=release \
+          --wrap-mode=nodownload \
+          -Dintrospection=false \
+          -Dexamples=false \
+          "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+          "$LIBWLEMBED_SUBMODULE_SRCDIR" \
+        || AC_MSG_ERROR([could not configure the bundled libwlembed submodule])
     fi
-    dnl Only set up the meson build tree here; the actual compilation is
-    dnl deferred to "make" (see the libwlembed-build target in Makefile.am).
-    "$MESON" setup \
-        --prefix="$LIBWLEMBED_MESON_PREFIX" \
-        --libdir="$LIBWLEMBED_MESON_LIBDIR" \
-        --buildtype=release \
-        --wrap-mode=nodownload \
-        -Dintrospection=false \
-        -Dexamples=false \
-        "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
-        "$LIBWLEMBED_SUBMODULE_SRCDIR" \
-      || AC_MSG_ERROR([could not configure the bundled libwlembed submodule])
 
-    dnl The staged headers/libs do not exist yet (they are produced at
-    dnl "make" time), so synthesize the pkg-config files that meson would
-    dnl otherwise generate, and resolve the flags through pkg-config as usual.
-    dnl The prefix below deliberately points at the *stage* directory so that
-    dnl the emitted -I/-L flags reference the staged headers and libraries.
+    dnl The libwlembed submodule is a meson project and cannot be built as part
+    dnl of the autotools "make". Building it here, at configure time, guarantees
+    dnl the staged headers and libraries exist before autotools ever compiles or
+    dnl links against them, and before the pkg-config checks below run.
+    AC_MSG_NOTICE([building bundled libwlembed...])
+    "$NINJA" -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" \
+      || AC_MSG_ERROR([could not build the bundled libwlembed submodule])
+    AC_MSG_NOTICE([staging bundled libwlembed...])
+    rm -rf "$LIBWLEMBED_SUBMODULE_STAGE"
+    DESTDIR="$LIBWLEMBED_SUBMODULE_STAGE" \
+      "$MESON" install -C "$LIBWLEMBED_SUBMODULE_BUILDDIR" --no-rebuild \
+      || AC_MSG_ERROR([could not stage the bundled libwlembed submodule])
+
+    dnl The staged headers/libs were produced just above, so synthesize the
+    dnl pkg-config files that meson would otherwise generate, and resolve the
+    dnl flags through pkg-config as usual. The prefix below deliberately points
+    dnl at the *stage* directory so that the emitted -I/-L flags reference the
+    dnl staged headers and libraries.
     LIBWLEMBED_MESON_STAGED_PREFIX="$LIBWLEMBED_SUBMODULE_STAGE$LIBWLEMBED_MESON_PREFIX"
     dnl Compute the libdir relative to prefix so the .pc files resolve it
     dnl correctly even on multiarch systems (e.g. /usr/lib/x86_64-linux-gnu).
@@ -324,13 +347,14 @@ EOF
       AC_MSG_ERROR([could not find the bundled libwlembed even after generating its pkg-config files])
     fi
 
-    dnl Ensure the final binaries can locate the staged libraries at runtime.
+    dnl Ensure the final binaries can locate the staged libraries when run
+    dnl from the build tree, and the installed libraries once installed.
     dnl Use DT_RPATH (--disable-new-dtags) so the rpath also applies to
     dnl transitively loaded dependencies: mate-screensaver-dialog links
     dnl libwlembed-gtk3-0 directly but only pulls libwlembed-0 in
     dnl transitively, and DT_RUNPATH is not inherited by other objects.
-    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
-    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR"
+    LIBWLEMBED_LIBS="$LIBWLEMBED_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR -Wl,-rpath,$LIBWLEMBED_MESON_LIBDIR"
+    LIBWLEMBED_GTK3_LIBS="$LIBWLEMBED_GTK3_LIBS -Wl,--disable-new-dtags -Wl,-rpath,$LIBWLEMBED_SUBMODULE_STAGE/$LIBWLEMBED_MESON_LIBDIR -Wl,-rpath,$LIBWLEMBED_MESON_LIBDIR"
   fi
 
   AC_SUBST([LIBWLEMBED_USE_BUNDLED])

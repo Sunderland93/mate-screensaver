@@ -40,55 +40,18 @@ DISTCLEANFILES =		\
 
 if ENABLE_BUNDLED_LIBWLEMBED
 
-WLEMBED_STAMP_LIB0 = $(LIBWLEMBED_SUBMODULE_BUILDDIR)/libwlembed/libwlembed-0.so.0.0.0
-WLEMBED_STAMP_DEPS = $(shell find $(top_srcdir)/submodules/libwlembed/libwlembed \
-	$(top_srcdir)/submodules/libwlembed/libwlembed-gtk3 \
-	\( -name '*.c' -o -name '*.h' -o -name 'meson.build' \))
+# The bundled libwlembed submodule is built and staged at configure time (see
+# configure.ac), so there is nothing to build during "make". The hook below
+# only needs to copy it from the stage directory into the install prefix.
 
-$(WLEMBED_STAMP_LIB0): $(WLEMBED_STAMP_DEPS)
-	@$(MAKE) $(AM_MAKEFLAGS) libwlembed-build
-
-libwlembed.stamp: $(WLEMBED_STAMP_LIB0)
-	@touch $@
-
-libwlembed-build:
-	@if test ! -f $(LIBWLEMBED_SUBMODULE_BUILDDIR)/build.ninja; then \
-		echo "Configuring bundled libwlembed..."; \
-		$(MESON) setup \
-			--prefix=$(prefix) \
-			--libdir=$(libdir) \
-			--buildtype=release \
-			--wrap-mode=nodownload \
-			-Dintrospection=false \
-			-Dexamples=false \
-			$(LIBWLEMBED_SUBMODULE_BUILDDIR) \
-			$(top_srcdir)/submodules/libwlembed; \
-	else \
-		$(MESON) setup --reconfigure \
-			--prefix=$(prefix) \
-			--libdir=$(libdir) \
-			--buildtype=release \
-			--wrap-mode=nodownload \
-			-Dintrospection=false \
-			-Dexamples=false \
-			$(LIBWLEMBED_SUBMODULE_BUILDDIR) \
-			$(top_srcdir)/submodules/libwlembed; \
+install-exec-hook:
+	@if test "x@LIBWLEMBED_USE_BUNDLED@" = "xyes"; then \
+		echo "Installing bundled libwlembed..."; \
+		$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) \
+			--destdir "$(DESTDIR)" --no-rebuild; \
 	fi
-	$(NINJA) -C $(LIBWLEMBED_SUBMODULE_BUILDDIR)
-	@if test ! -f "$(LIBWLEMBED_SUBMODULE_STAGE)$(libdir)/libwlembed-0.so.0" -o \
-		"$(LIBWLEMBED_SUBMODULE_BUILDDIR)/libwlembed/libwlembed-0.so.0.0.0" -nt \
-			"$(LIBWLEMBED_SUBMODULE_STAGE)$(libdir)/libwlembed-0.so.0"; then \
-		rm -rf $(LIBWLEMBED_SUBMODULE_STAGE); \
-		DESTDIR="$(LIBWLEMBED_SUBMODULE_STAGE)" \
-			$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) --no-rebuild; \
-	fi
-
-install-exec-hook: $(top_builddir)/libwlembed.stamp
-	$(MESON) install -C $(LIBWLEMBED_SUBMODULE_BUILDDIR) \
-		--destdir "$(DESTDIR)" --no-rebuild
 
 distclean-local:
-	rm -f libwlembed.stamp
 	rm -rf $(LIBWLEMBED_SUBMODULE_BUILDDIR)
 
 # Do not ship the submodule build directory in tarballs.
@@ -124,6 +87,6 @@ ChangeLog:
 
 dist: ChangeLog
 
-.PHONY: ChangeLog libwlembed-build
+.PHONY: ChangeLog
 
 -include $(top_srcdir)/git.mk

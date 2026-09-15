@@ -357,6 +357,9 @@ static void _gs_monitor_update_from_prefs(GSMonitor* monitor, GSPrefs* prefs)
 
 static void disconnect_listener_signals(GSMonitor* monitor)
 {
+	if (monitor->priv->listener == NULL)
+		return;
+
 	g_signal_handlers_disconnect_by_func(monitor->priv->listener, listener_lock_cb, monitor);
 	g_signal_handlers_disconnect_by_func(monitor->priv->listener, listener_quit_cb, monitor);
 	g_signal_handlers_disconnect_by_func(monitor->priv->listener, listener_cycle_cb, monitor);
@@ -410,6 +413,9 @@ static void connect_watcher_signals(GSMonitor *monitor)
 
 static void disconnect_manager_signals(GSMonitor* monitor)
 {
+	if (monitor->priv->manager == NULL)
+		return;
+
 	g_signal_handlers_disconnect_by_func(monitor->priv->manager, manager_activated_cb, monitor);
 	g_signal_handlers_disconnect_by_func(monitor->priv->manager, manager_deactivated_cb, monitor);
 }
@@ -422,6 +428,9 @@ static void connect_manager_signals(GSMonitor* monitor)
 
 static void disconnect_prefs_signals(GSMonitor* monitor)
 {
+	if (monitor->priv->prefs == NULL)
+		return;
+
 	g_signal_handlers_disconnect_by_func(monitor->priv->prefs, _gs_monitor_update_from_prefs, monitor);
 }
 
@@ -435,6 +444,15 @@ static void gs_monitor_init(GSMonitor* monitor)
 
 	monitor->priv = gs_monitor_get_instance_private (monitor);
 
+	monitor->priv->watcher = gs_watcher_new();
+
+	if (monitor->priv->watcher == NULL)
+	{
+		g_critical("Unable to create an idle watcher for the current display "
+			   "backend; the screensaver will not run.");
+		return;
+	}
+
 	monitor->priv->prefs = gs_prefs_new();
 	connect_prefs_signals(monitor);
 
@@ -444,18 +462,10 @@ static void gs_monitor_init(GSMonitor* monitor)
 	monitor->priv->fade = gs_fade_new();
 	monitor->priv->grab = gs_grab_new();
 
-	monitor->priv->watcher = gs_watcher_new();
 	connect_watcher_signals(monitor);
 
 	monitor->priv->manager = gs_manager_new();
 	connect_manager_signals(monitor);
-
-	if (monitor->priv->watcher == NULL)
-	{
-		g_critical("Unable to create an idle watcher for the current display "
-			   "backend; the screensaver will not run.");
-		return;
-	}
 
 	_gs_monitor_update_from_prefs(monitor, monitor->priv->prefs);
 }
@@ -476,13 +486,18 @@ static void gs_monitor_finalize(GObject* object)
 	disconnect_manager_signals(monitor);
 	disconnect_prefs_signals(monitor);
 
-	g_object_unref(monitor->priv->fade);
-	g_object_unref(monitor->priv->grab);
+	if (monitor->priv->fade)
+		g_object_unref(monitor->priv->fade);
+	if (monitor->priv->grab)
+		g_object_unref(monitor->priv->grab);
 	if (monitor->priv->watcher)
 		g_object_unref(monitor->priv->watcher);
-	g_object_unref(monitor->priv->listener);
-	g_object_unref(monitor->priv->manager);
-	g_object_unref(monitor->priv->prefs);
+	if (monitor->priv->listener)
+		g_object_unref(monitor->priv->listener);
+	if (monitor->priv->manager)
+		g_object_unref(monitor->priv->manager);
+	if (monitor->priv->prefs)
+		g_object_unref(monitor->priv->prefs);
 
 	G_OBJECT_CLASS(gs_monitor_parent_class)->finalize(object);
 }

@@ -69,16 +69,9 @@ gs-theme-engine-marshal.c: gs-theme-engine-marshal.list
 gs-theme-engine-marshal.h: gs-theme-engine-marshal.list
 	@GLIB_GENMARSHAL@ $< --prefix=gs_theme_engine_marshal --header > $@
 
-if ENABLE_BUNDLED_LIBWLEMBED
-# The bundled libwlembed is built and staged by the src subdirectory (which
-# comes first in SUBDIRS, so it always runs before savers). We only wait for
-# the resulting stamp via an order-only prerequisite: it ensures the stamp
-# exists before the savers are built, but never re-triggers a libwlembed build.
-# gs-theme-window.c (which includes libwlembed-gtk3's headers) is compiled into
-# libgs-theme-engine.a, so that library must also be ordered behind the stamp.
-saver_PROGRAMS: | $(top_builddir)/libwlembed.stamp
-libgs_theme_engine_a_DEPENDENCIES = $(top_builddir)/libwlembed.stamp
-endif
+# The bundled libwlembed is built and staged at configure time (see
+# configure.ac), so the staged headers/libraries are already available when
+# the savers are compiled; there is nothing to wait for here.
 
 noinst_LIBRARIES =			\
 	libgs-theme-engine.a

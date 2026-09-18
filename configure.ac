@@ -204,11 +204,15 @@ if test "x$enable_wayland" = "xyes"; then
   PKG_CHECK_MODULES(WAYLAND_CLIENT, [wayland-client >= 1.21.0], [have_wayland_client=yes], [have_wayland_client=no])
   PKG_CHECK_MODULES(WAYLAND_PROTOCOLS, [wayland-protocols >= 1.31], [have_wayland_protocols=yes], [have_wayland_protocols=no])
   PKG_CHECK_MODULES(GDK_WAYLAND, [gdk-wayland-3.0 >= $GTK_REQUIRED_VERSION], [have_gdk_wayland=yes], [have_gdk_wayland=no])
-  PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
 
   LIBWLEMBED_USE_BUNDLED=no
   if test "x$use_system_libwlembed" = "xyes"; then
-    dnl User explicitly asked for a system libwlembed; require it.
+    dnl User explicitly asked for a system libwlembed; require it. Probe it here
+    dnl rather than before the bundled/system choice: pkg.m4 keeps *_CFLAGS/*_LIBS
+    dnl unchanged once they are non-empty, so probing earlier would make the
+    dnl bundled branch inherit the system flags and bypass the staged .pc files.
+    AC_MSG_NOTICE([using the system-installed libwlembed; it will not be installed by this build])
+    PKG_CHECK_MODULES(LIBWLEMBED, [libwlembed-0], [have_libwlembed=yes], [have_libwlembed=no])
     PKG_CHECK_MODULES(LIBWLEMBED_GTK3, [libwlembed-gtk3-0], [have_libwlembed_gtk3=yes], [have_libwlembed_gtk3=no])
     if test "x$have_libwlembed" = "xno" || test "x$have_libwlembed_gtk3" = "xno"; then
       AC_MSG_ERROR([--with-system-libwlembed=true requested but libwlembed is not installed on the system])

@@ -396,28 +396,43 @@ watchdog_timer (GSWatcher *watcher)
 
 #ifdef ENABLE_WAYLAND
 
+static gboolean
+on_activation_idled_idle (gpointer data)
+{
+    GSWatcher *watcher = GS_WATCHER (data);
+
+    _gs_watcher_set_session_idle_notice (watcher, FALSE);
+    _gs_watcher_set_session_idle (watcher, TRUE);
+
+    return G_SOURCE_REMOVE;
+}
+
 static void
 on_activation_idled (void                            *data,
                      struct ext_idle_notification_v1 *notification)
 {
+    gs_debug ("Wayland: activation idle notification fired");
+    g_idle_add (on_activation_idled_idle, data);
+}
+
+static gboolean
+on_activation_resumed_idle (gpointer data)
+{
     GSWatcher *watcher = GS_WATCHER (data);
 
-    gs_debug ("Wayland: activation idle notification fired");
-
+    _gs_watcher_set_session_idle (watcher, FALSE);
     _gs_watcher_set_session_idle_notice (watcher, FALSE);
-    _gs_watcher_set_session_idle (watcher, TRUE);
+
+    return G_SOURCE_REMOVE;
 }
 
 static void
 on_activation_resumed (void                            *data,
                        struct ext_idle_notification_v1 *notification)
 {
-    GSWatcher *watcher = GS_WATCHER (data);
-
     gs_debug ("Wayland: activation resumed");
 
-    _gs_watcher_set_session_idle (watcher, FALSE);
-    _gs_watcher_set_session_idle_notice (watcher, FALSE);
+    g_idle_add (on_activation_resumed_idle, data);
 }
 
 static struct ext_idle_notification_v1_listener activation_listener =
@@ -586,6 +601,8 @@ wayland_activate_monitoring (GSWatcher *watcher,
     gs_debug ("Wayland: activating idle monitoring");
 
     priv->timeout_ms = timeout_ms;
+    priv->idle = FALSE;
+    priv->idle_notice = FALSE;
 
     display = gdk_wayland_display_get_wl_display (gdk_display_get_default ());
     if (display == NULL)

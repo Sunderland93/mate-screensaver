@@ -108,9 +108,9 @@ on_lock_finished (void                        *data,
 
 	gs_debug ("Session lock finished by compositor");
 
-	/* The compositor has already destroyed all lock surfaces on its side,
-	 * so we must NOT send protocol destroy requests for them.  Destroy the
-	 * client-side proxies locally before dropping our references. */
+	/* Lock surfaces are client-owned objects: "finished" does not destroy
+	 * them and the compositor keeps their configure state. Send the
+	 * destroy request so the wl_surfaces lose the lock-surface role */
 	manager->finished = TRUE;
 	{
 		GHashTableIter iter;
@@ -123,7 +123,7 @@ on_lock_finished (void                        *data,
 
 			if (lock_surface->surface != NULL)
 			{
-				wl_proxy_destroy ((struct wl_proxy *) lock_surface->surface);
+				ext_session_lock_surface_v1_destroy (lock_surface->surface);
 				lock_surface->surface = NULL;
 			}
 		}
@@ -243,6 +243,15 @@ on_window_realize (GtkWidget            *widget,
 		wl_output = gdk_wayland_monitor_get_wl_output (monitor);
 	}
 
+	/* get_lock_surface's output argument should not nullable. Passing NULL
+	 * makes libwayland-client refuse to marshal the request and puts the
+	 * connection into an error state, which is fatal for the locker. */
+	if (wl_output == NULL)
+	{
+		gs_debug ("No wl_output for this window's monitor, not creating a lock surface");
+		return;
+	}
+
 	/* Never create two lock surfaces for the same output. */
 	if (has_surface_for_output (manager, wl_output))
 	{
@@ -313,7 +322,22 @@ gs_session_lock_manager_finalize (GObject *object)
 
 	if (manager->wl_lock != NULL)
 	{
-		gs_session_lock_manager_unlock (manager);
+		if (manager->locked)
+		{
+			/* Never unlock from teardown, only a successful
+			 * authentication may do that. unlock_and_destroy here would
+			 * unlock without a password, and destroy is a protocol error
+			 * once "locked" was received. When the process exits the 
+			 * compositor keeps the session locked, as it does when the locker crashes. */
+			g_warning ("Session lock manager finalized while the session is "
+			           "locked; leaving the session locked");
+			manager->wl_lock = NULL;
+		}
+		else
+		{
+			/* A request the compositor has not confirmed -> cancel it */
+			gs_session_lock_manager_unlock (manager);
+		}
 	}
 
 	if (manager->lock_surfaces != NULL)

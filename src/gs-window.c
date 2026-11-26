@@ -1670,7 +1670,16 @@ x11_popup_dialog (GSWindow *window)
 	if (is_logout_enabled (window))
 	{
 		command = g_string_append (command, " --enable-logout");
-		g_string_append_printf (command, " --logout-command='%s'", window->priv->logout_command);
+		if (window->priv->logout_command != NULL)
+		{
+			char *quoted;
+
+			/* The command is parsed with g_shell_parse_argv: a quote in
+			 * the setting must not end the argument. */
+			quoted = g_shell_quote (window->priv->logout_command);
+			g_string_append_printf (command, " --logout-command=%s", quoted);
+			g_free (quoted);
+		}
 	}
 
 	if (window->priv->status_message)
@@ -1979,7 +1988,16 @@ wayland_popup_dialog (GSWindow *window)
 	if (window->priv->logout_enabled)
 	{
 		command = g_string_append (command, " --enable-logout");
-		g_string_append_printf (command, " --logout-command='%s'", window->priv->logout_command);
+		if (window->priv->logout_command != NULL)
+		{
+			char *quoted;
+
+			/* The command is parsed with g_shell_parse_argv: a quote in
+			 * the setting must not end the argument. */
+			quoted = g_shell_quote (window->priv->logout_command);
+			g_string_append_printf (command, " --logout-command=%s", quoted);
+			g_free (quoted);
+		}
 	}
 
 	if (window->priv->status_message)
@@ -2029,7 +2047,9 @@ wayland_popup_dialog (GSWindow *window)
 	                  window);
 
 	token = wle_gtk_socket_get_embedding_token (WLE_GTK_SOCKET (window->priv->lock_socket));
-	gs_debug ("Dialog embedding token: %s", token != NULL ? token : "(null)");
+	/* Not the token itself: it is a credential for embedding into the
+	 * lock surface and has no business in a log. */
+	gs_debug ("Dialog embedding token %s", token != NULL ? "created" : "missing");
 
 	if (window->priv->drawing_area != NULL)
 	{

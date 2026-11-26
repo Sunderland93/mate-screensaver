@@ -82,19 +82,64 @@ G_DEFINE_TYPE_WITH_PRIVATE (GSJob, gs_job, G_TYPE_OBJECT)
 static GHashTable *wayland_client_pids;
 static gboolean wayland_client_filter_installed;
 
+/* What the unlock dialog and the savers need from the embedded compositor.
+ * libwlembed forwards every other global to the real compositor over the
+ * locker's own connection, which the compositor trusts: window lists and
+ * management (zwlr_foreign_toplevel_manager_v1, ext_foreign_toplevel_list_v1),
+ * activation tokens (xdg_activation_v1) and the session's primary selection
+ * (zwp_primary_selection_device_manager_v1). None of that belongs on a lock
+ * screen, and savers can be third-party programs.
+ *
+ * wl_data_device_manager has to stay: GTK 3 does not create a GdkSeat (no
+ * keyboard, so no password entry) until it has bound it. It still forwards
+ * the session clipboard; hiding that needs a local-only data device in
+ * libwlembed. */
+static const char *const wayland_allowed_globals[] =
+{
+	"wl_compositor",
+	"wl_subcompositor",
+	"wl_shm",
+	"wl_seat",
+	"wl_data_device_manager",
+	"wl_output",
+	"xdg_wm_base",
+	"wle_embedding_manager_v1",
+	"zxdg_output_manager_v1",
+	"zxdg_decoration_manager_v1",
+	"org_kde_kwin_server_decoration_manager",
+	"wp_viewporter",
+	"wp_fractional_scale_manager_v1",
+	"wp_presentation",
+	"zwp_linux_dmabuf_v1",
+	NULL
+};
+
+static gboolean
+wayland_global_allowed (const struct wl_global *global)
+{
+	const struct wl_interface *iface = wl_global_get_interface (global);
+
+	if (iface == NULL || iface->name == NULL)
+	{
+		return FALSE;
+	}
+
+	return g_strv_contains (wayland_allowed_globals, iface->name);
+}
+
 static bool
 wayland_client_global_filter (const struct wl_client *client,
                               const struct wl_global *global,
                               void                    *data)
 {
 	pid_t pid = 0;
-	(void) global;
 	(void) data;
 
 	wl_client_get_credentials ((struct wl_client *) client, &pid, NULL, NULL);
 
 	return wayland_client_pids != NULL &&
-	       g_hash_table_contains (wayland_client_pids, GINT_TO_POINTER (pid));
+	       g_hash_table_contains (wayland_client_pids, GINT_TO_POINTER (pid)) &&
+	       wayland_global_allowed (global);
 }
 
 void
@@ -158,7 +203,9 @@ widget_get_id_string (GtkWidget *widget)
 		if (WLE_IS_GTK_SOCKET (widget))
 		{
 			id = g_strdup (wle_gtk_socket_get_embedding_token (WLE_GTK_SOCKET (widget)));
-			gs_debug ("widget_get_id_string: WleGtkSocket, embedding token '%s'", id);
+			/* Never log the token: it is a credential for embedding. */
+			gs_debug ("widget_get_id_string: WleGtkSocket, embedding token %s",
+			          id != NULL ? "set" : "missing");
 		}
 		else
 		{

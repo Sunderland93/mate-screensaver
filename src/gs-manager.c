@@ -149,8 +149,15 @@ session_lock_finished_idle (gpointer data)
 
 	if (manager->priv->active)
 	{
-		gs_manager_deactivate (manager);
+		/* Let the monitor deactivate after a confirmed lock that has to
+		 * go through the listener. Deactivating here first would leave the listener
+		 * active and make it ignore every later lock request. */
 		g_signal_emit (manager, signals [SESSION_LOCK_FINISHED], 0);
+
+		if (manager->priv->active)
+		{
+			gs_manager_deactivate (manager);
+		}
 	}
 
 	return FALSE;
@@ -1724,6 +1731,53 @@ gs_manager_create_window_for_monitor (GSManager  *manager,
 	}
 }
 
+#ifdef ENABLE_WAYLAND
+static gboolean
+manager_has_window_for_monitor (GSManager  *manager,
+                                GdkMonitor *monitor)
+{
+	GSList *l;
+
+	for (l = manager->priv->windows; l != NULL; l = l->next)
+	{
+		if (gs_window_get_monitor (GS_WINDOW (l->data)) == monitor)
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+static void
+on_monitor_geometry_ready (GdkMonitor *monitor,
+                           GParamSpec *pspec,
+                           GSManager  *manager)
+{
+	GdkRectangle rect;
+
+	gdk_monitor_get_geometry (monitor, &rect);
+	if (rect.width <= 0 || rect.height <= 0)
+	{
+		return;
+	}
+
+	g_signal_handlers_disconnect_by_func (monitor, on_monitor_geometry_ready, manager);
+
+	/* The screensaver may have been deactivated meanwhile, or re-activated
+	 * and already covered this monitor. */
+	if (!manager->priv->active ||
+	    manager_has_window_for_monitor (manager, monitor))
+	{
+		return;
+	}
+
+	gs_debug ("Monitor geometry known (%dx%d), creating its window",
+	          rect.width, rect.height);
+	gs_manager_create_window_for_monitor (manager, monitor);
+}
+#endif
+
 static void
 on_display_monitor_added (GdkDisplay *display,
                           GdkMonitor *monitor,
@@ -1746,6 +1800,29 @@ on_display_monitor_added (GdkDisplay *display,
 		gs_window_cancel_unlock_request (GS_WINDOW (l->data));
 		l = l->next;
 	}
+
+#ifdef ENABLE_WAYLAND
+	if (GDK_IS_WAYLAND_DISPLAY (display))
+	{
+		GdkRectangle rect;
+
+		/* GDK announces a Wayland monitor before the output's geometry
+		 * has arrived. A window realized now is 0x0, and its first commit
+		 * after acking the lock surface's configure is a 1x1 buffer: a
+		 * fatal ext-session-lock-v1 dimensions_mismatch error, leaving the
+		 * session locked with no locker. Wait for the geometry. (The
+		 * compositor keeps the new output covered meanwhile.) */
+		gdk_monitor_get_geometry (monitor, &rect);
+		if (rect.width <= 0 || rect.height <= 0)
+		{
+			gs_debug ("Monitor has no geometry yet, deferring its window");
+			g_signal_connect_object (monitor, "notify::geometry",
+			                         G_CALLBACK (on_monitor_geometry_ready),
+			                         manager, 0);
+			return;
+		}
+	}
+#endif
 
 	/* add a new window */
 	gs_manager_create_window_for_monitor (manager, monitor);

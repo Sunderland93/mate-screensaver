@@ -2412,8 +2412,8 @@ gs_lock_plug_new (void)
 			                       "embedding-token", embedding_token,
 			                       NULL);
 
-			gs_debug ("Created lock plug with embedding token '%s'",
-			          embedding_token);
+			/* Not the token itself: it is a credential for embedding. */
+			gs_debug ("Created lock plug with an embedding token");
 		}
 		else
 		{

@@ -105,11 +105,33 @@ static void manager_session_lock_confirmed_cb(GSManager* manager, GSMonitor* mon
 
 static void manager_session_lock_finished_cb(GSManager* manager, GSMonitor* monitor)
 {
-	/* A refused lock leaves the idle notification active. Keep it so its
-	 * resumed event can reset the idle state and a later idled event can retry
-	 * the lock. Recreating it here could immediately report the still-idle
-	 * seat again and cause a tight retry loop. */
-	monitor->priv->session_lock_pending = FALSE;
+	if (monitor->priv->session_lock_pending)
+	{
+		/* Refused before "locked": the listener never went active, so
+		 * gs_listener_set_active (FALSE) would be a no-op. Deactivate the
+		 * manager directly. The idle notification is still armed so the
+		 * watcher is not deactivated while a lock is pending, keep it so
+		 * its resumed event can reset the idle state and a later idled
+		 * event can retry the lock. Recreating it here could immediately
+		 * report the still-idle seat again and cause a tight retry loop. */
+		monitor->priv->session_lock_pending = FALSE;
+		gs_manager_set_active (monitor->priv->manager, FALSE);
+	}
+	else
+	{
+		/* Finished after "locked" (the compositor ended a confirmed lock):
+		 * deactivate through the listener, which also emits
+		 * ActiveChanged (FALSE) and re-enables the idle watcher. */
+		gs_listener_set_active (monitor->priv->listener, FALSE);
+	}
+
+	/* Tell the lock is gone now to a quit that was waiting for the unlock  */
+	if (monitor->priv->quit_pending &&
+	    !gs_manager_get_active (monitor->priv->manager))
+	{
+		monitor->priv->quit_pending = FALSE;
+		mate_screensaver_quit ();
+	}
 }
 
 static gboolean watcher_idle_cb(GSWatcher* watcher, gboolean is_idle, GSMonitor* monitor)
@@ -259,11 +281,12 @@ static void listener_quit_cb(GSListener* listener, GSMonitor* monitor)
 	if (gs_manager_get_active (monitor->priv->manager))
 	{
 		/* Quitting an active screensaver would unlock it without checking the
-		 * password. Authenticate first, then quit after deactivation. */
-		if (gs_manager_request_unlock (monitor->priv->manager))
-		{
-			monitor->priv->quit_pending = TRUE;
-		}
+		 * password. Authenticate first, then quit after deactivation.
+		 * Remember the request even when no new dialog is brought up:
+		 * request_unlock fails if the dialog is already showing, and the
+		 * user's next successful unlock must still end in the quit. */
+		monitor->priv->quit_pending = TRUE;
+		gs_manager_request_unlock (monitor->priv->manager);
 	}
 	else
 	{

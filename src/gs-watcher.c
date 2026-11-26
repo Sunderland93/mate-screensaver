@@ -525,6 +525,7 @@ remove_idle_notifier (GSWatcher *watcher)
         ext_idle_notifier_v1_destroy (priv->idle_notifier);
         priv->idle_notifier = NULL;
     }
+    priv->idle_notifier_name = 0;
 }
 
 static void
@@ -549,16 +550,76 @@ on_registry_global (void                *data,
     GSWatcher        *watcher = GS_WATCHER (data);
     GSWatcherPrivate *priv = watcher->priv;
 
-    if (strcmp (interface, "ext_idle_notifier_v1") == 0)
+    if (strcmp (interface, "ext_idle_notifier_v1") == 0 &&
+        priv->idle_notifier == NULL)
     {
         priv->idle_notifier = bind_idle_notifier (registry, name);
+        priv->idle_notifier_name = name;
     }
+}
+
+static void
+on_registry_global_remove (void               *data,
+                           struct wl_registry *registry,
+                           guint32             name)
+{
+    GSWatcher        *watcher = GS_WATCHER (data);
+    GSWatcherPrivate *priv = watcher->priv;
+
+    /* Every other global (outputs coming and going, ...) is of no concern
+     * here, but libwayland aborts if this handler is missing. */
+    if (name == 0 || name != priv->idle_notifier_name)
+    {
+        return;
+    }
+
+    gs_debug ("Wayland: idle notifier global removed");
+
+    remove_idle_notification (watcher, &priv->idle_notification);
+    remove_idle_notification (watcher, &priv->lock_notification);
+    remove_idle_notifier (watcher);
 }
 
 static const struct wl_registry_listener registry_listener =
 {
-    .global = on_registry_global,
+    .global        = on_registry_global,
+    .global_remove = on_registry_global_remove,
 };
+
+/* One registry for the watcher's lifetime. wl_registry has no destructor
+ * request, so wl_registry_destroy() only frees the client-side proxy and
+ * every wl_display_get_registry() leaks an object in the compositor; it
+ * must not be called per lock/unlock cycle. */
+static gboolean
+ensure_registry (GSWatcher *watcher)
+{
+    GSWatcherPrivate  *priv = watcher->priv;
+    struct wl_display *display;
+
+    if (priv->registry != NULL)
+    {
+        return TRUE;
+    }
+
+    display = gdk_wayland_display_get_wl_display (gdk_display_get_default ());
+    if (display == NULL)
+    {
+        gs_debug ("Wayland: could not get Wayland display for activation");
+        return FALSE;
+    }
+
+    priv->registry = wl_display_get_registry (display);
+    if (priv->registry == NULL)
+    {
+        gs_debug ("Wayland: could not get Wayland registry");
+        return FALSE;
+    }
+
+    wl_registry_add_listener (priv->registry, &registry_listener, watcher);
+    wl_display_roundtrip (display);
+
+    return TRUE;
+}
 
 static struct ext_idle_notification_v1 *
 create_idle_notification (GSWatcher *watcher,
@@ -616,7 +677,6 @@ wayland_activate_monitoring (GSWatcher *watcher,
                              guint      timeout_ms)
 {
     GSWatcherPrivate *priv = watcher->priv;
-    struct wl_display *display;
 
     gs_debug ("Wayland: activating idle monitoring");
 
@@ -626,25 +686,11 @@ wayland_activate_monitoring (GSWatcher *watcher,
 
     remove_idle_notification (watcher, &priv->idle_notification);
     remove_idle_notification (watcher, &priv->lock_notification);
-    remove_idle_notifier (watcher);
-    remove_registry (watcher);
 
-    display = gdk_wayland_display_get_wl_display (gdk_display_get_default ());
-    if (display == NULL)
+    if (!ensure_registry (watcher))
     {
-        gs_debug ("Wayland: could not get Wayland display for activation");
         return;
     }
-
-    priv->registry = wl_display_get_registry (display);
-    if (priv->registry == NULL)
-    {
-        gs_debug ("Wayland: could not get Wayland registry");
-        return;
-    }
-
-    wl_registry_add_listener (priv->registry, &registry_listener, watcher);
-    wl_display_roundtrip (display);
 
     priv->idle_notification = create_idle_notification (watcher,
                                                         timeout_ms,
@@ -665,10 +711,10 @@ wayland_deactivate_monitoring (GSWatcher *watcher)
 
     gs_debug ("Wayland: deactivating idle monitoring");
 
+    /* Keep the registry and the notifier: only the notifications follow
+     * the active state (see ensure_registry ()). */
     remove_idle_notification (watcher, &priv->idle_notification);
     remove_idle_notification (watcher, &priv->lock_notification);
-    remove_idle_notifier (watcher);
-    remove_registry (watcher);
 }
 
 #endif /* ENABLE_WAYLAND */

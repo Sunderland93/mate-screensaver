@@ -59,6 +59,7 @@ struct GSWatcherPrivate
     struct ext_idle_notification_v1 *idle_notification;
     struct ext_idle_notification_v1 *lock_notification;
     struct ext_idle_notifier_v1 *idle_notifier;
+    guint32 idle_notifier_name; /* registry name of the bound global, 0 if none */
     struct wl_registry *registry;
     guint timeout_ms;
     guint lock_delay_ms;

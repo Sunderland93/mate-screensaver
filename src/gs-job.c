@@ -491,7 +491,9 @@ spawn_on_widget (GtkWidget  *widget,
 	int         child_pid;
 	int         id;
 	int         i;
+#ifdef ENABLE_WAYLAND
 	gboolean    embedded_wayland = FALSE;
+#endif
 
 	if (command == NULL)
 	{
@@ -562,10 +564,12 @@ spawn_on_widget (GtkWidget  *widget,
 	}
 
 	gs_debug ("spawn_on_widget: started '%s' with pid %d", command, child_pid);
+#ifdef ENABLE_WAYLAND
 	if (embedded_wayland)
 	{
 		gs_job_set_wayland_client_allowed (child_pid, TRUE);
 	}
+#endif
 
 	g_strfreev (argv);
 
